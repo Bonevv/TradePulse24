@@ -16,3 +16,5 @@
 *.log
 /data/private/*
 !/data/private/.htaccess
+
+__pycache__/

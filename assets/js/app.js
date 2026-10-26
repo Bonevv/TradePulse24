@@ -567,7 +567,7 @@ function drawEquity(e) {
 function viewLoading() {
   const msg = S.error || "Зареждам цените и смятам сигналите…";
   return `<div class="loading"><div><div class="spinner"></div><h2>Подготвям сайта</h2><p>${esc(msg)}</p>
-    <p class="muted" style="font-size:12px">Ако това съобщение не изчезва, провери дали cron задачата (api/cron.php) работи. Виж README.</p></div></div>`;
+    <p class="muted" style="font-size:12px">Първото зареждане може да отнеме няколко секунди. Ако остане този екран, презареди с Ctrl+F5 и провери дали кодовите файлове са от една версия.</p></div></div>`;
 }
 
 function onboardingCard() {
@@ -1128,13 +1128,15 @@ function typing() {
 }
 
 async function getJSON(path, fallback) {
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  const timeout = controller ? setTimeout(() => controller.abort(), 15000) : null;
   try {
-    const r = await fetch(`${path}?t=${Math.floor(Date.now() / 30000)}`, { cache: "no-store" });
+    const r = await fetch(`${path}?t=${Math.floor(Date.now() / 30000)}`, { cache: "no-store", ...(controller ? { signal: controller.signal } : {}) });
     if (!r.ok) return fallback;
     return await r.json();
   } catch (_e) {
     return fallback;
-  }
+  } finally { if (timeout !== null) clearTimeout(timeout); }
 }
 
 /** Всички стратегии: от кода, от библиотеката и твоите (от конструктора). */
@@ -1158,18 +1160,21 @@ function splitId(id) {
 let loadSequence = 0;
 async function load() {
   const seq = ++loadSequence;
-  const [meta, news, results, recent, custom] = await Promise.all([
+  try {
+  const [meta, rawNews, results, recent, custom] = await Promise.all([
     getJSON("data/meta.json", null), getJSON("data/news.json", { events: [] }), getJSON("data/results.json", null),
     getJSON("data/recent.json", null), getJSON("data/custom.json", { strategies: [] }),
   ]);
   if (seq !== loadSequence) return;
+  const news = { ...(rawNews || {}), events: Array.isArray(rawNews) ? rawNews : Array.isArray(rawNews?.events) ? rawNews.events : [] };
+  news.events = news.events.filter((e) => e && typeof e.title === "string" && Number.isFinite(e.time));
   clearTimeout(S.timer);
   S.meta = meta;
   S.results = results;
-  S.customSpecs = custom.strategies || [];
+  S.customSpecs = Array.isArray(custom?.strategies) ? custom.strategies : [];
   buildCatalog(S.customSpecs);
   const entriesMap = (results && results.entries) || {};
-  const hasQuotes = Object.values(meta?.quotes || {}).some((q) => Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
+  const hasQuotes = Object.values(meta?.quotes || {}).some((q) => q && Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
   if (!meta || !recent || !meta.prices_updated || !hasQuotes) {
     S.engine = null;
     S.error = "Липсват текущи цени от cron.php. Показваме само историята на стратегиите, без активни сигнали.";
@@ -1214,6 +1219,12 @@ async function load() {
   if (typing()) renderChrome(); else render();
   if (changes.length) toast(`${changes.length} следени сигнала имат ново състояние. Провери „Следени“. `);
   S.timer = setTimeout(load, 5 * 60000);
+  } catch (error) {
+    if (seq !== loadSequence) return;
+    S.error = "Не успяхме да подготвим ценовия модел. Провери дали recent.json е създаден от текущия cron и дали всички JavaScript файлове са обновени.";
+    if (window.TP24_BOOT) window.TP24_BOOT.fail("data_or_script_error", "app.js", 0, error.name);
+    else { const main = document.getElementById("main"); if (main) main.innerHTML = `<section class="panel" role="alert"><h1>Зареждането прекъсна</h1><p>${esc(S.error)}</p></section>`; }
+  }
 }
 
 /* ------------------------------------------------------------ действия */

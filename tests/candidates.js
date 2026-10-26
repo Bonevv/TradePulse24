@@ -26,11 +26,11 @@ const items = FX.RESEARCH.flatMap((s) => s.tfs.map((tf) => ({ key: s.key, tf }))
 context.onmessage({ data: { cmd: "run", items } });
 assert.ok(!output.some((m) => m.type === "error"), JSON.stringify(output.filter((m) => m.type === "error")));
 const results = output.filter((m) => m.type === "result");
-assert.equal(results.length, 7);
+assert.equal(results.length, 9);
 for (const { entry } of results) {
   assert.ok(entry && entry.validation && Number.isFinite(entry.stats.total_r));
   assert.ok(entry.validation.cutoff > entry.stats.start);
   if (entry.stats.verdict === "good") assert.equal(entry.validation.passed, true);
   console.log(`${entry.id}: ${entry.stats.trades} trades; ${entry.stats.verdict}; holdout ${entry.validation.holdout.trades} trades, ${entry.validation.holdout.avg_r}R/trade`);
 }
-console.log("OK: 3 new families, 7 day/swing variants, full bundled history and chronological holdout; indicator values are unchanged by future bars");
+console.log("OK: 7 initial variants and 2 instrument-specific swing watchlist variants, full bundled history and chronological holdout; indicator values are unchanged by future bars");

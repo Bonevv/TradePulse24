@@ -23,4 +23,10 @@
   ];
   FX.RESEARCH = specs.map((s) => FX.build({ ...s, source, url, approx: true, group: "За тест", origin: "research",
     note: "Това е отделен вариант с изрично описани правила, а не копие на оригинален робот. Нужни са проверка върху отделен период и наблюдение занапред." }));
+  const base = FX.LIBRARY.find((s) => s.key === "lib_supertrend_ema").spec;
+  for (const [key, pair, name] of [["research_gold_st_ema", "XAUUSD", "Злато: Supertrend + EMA 200"], ["research_jpy_st_ema", "USDJPY", "USD/JPY: Supertrend + EMA 200"]]) {
+    FX.RESEARCH.push(FX.build({ ...base, key, pairs: [pair], tfs: ["H4"], name, origin: "research", group: "За тест", approx: true,
+      short: "Специализация за един инструмент на H4. За наблюдение; отделните годишни извадки още са малки.",
+      note: "В прегледа на 2024, 2025 и наличната 2026 г. всеки период е положителен. Сделките са недостатъчни за потвърждение. Това е вариант на същото семейство, а не нова независима стратегия." }));
+  }
 })(self.FX = self.FX || {});
