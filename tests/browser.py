@@ -75,6 +75,10 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             page.locator('[data-f="name"]').fill("Дневна проверка")
             page.get_by_role("button", name="Запази стратегията", exact=True).click()
             page.wait_for_function("LAB.custom.length === 1 && location.hash === '#/workshop'")
+            page.locator('summary').filter(has_text="Пулс · проверка на Gemini").click()
+            page.locator('[data-lab="gemini-check"]').click()
+            page.wait_for_function("!LAB.geminiChecking && LAB.geminiCheck?.code === 'not_configured'")
+            assert "not_configured" in page.locator("#main").inner_text()
             key = page.evaluate("LAB.custom[0].key")
             variant = key + "-H1"
             assert digest(site / "data/results.json") == original_results

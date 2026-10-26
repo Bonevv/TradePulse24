@@ -19,8 +19,9 @@ if (!$event) respond_json(['ok' => false, 'error' => 'Новината вече 
 try {
     $signal = ai_signal($in['signal'] ?? null);
     $context = ai_context($event, $signal, read_json(DATA_DIR . '/meta.json', []), read_json(DATA_DIR . '/results.json', []), time());
-    $result = ai_cached($context, $config, private_dir() . '/ai-cache.json');
+    $result = ai_cached($context, $config, ai_cache_path());
     respond_json(array_merge(['ok' => true], $result));
+} catch (GeminiFailure $e) { ai_failure($e);
 } catch (InvalidArgumentException $e) { respond_json(['ok' => false, 'error' => $e->getMessage()], 400);
-} catch (RateLimited $e) { respond_json(['ok' => false, 'error' => $e->getMessage()], 429);
+} catch (RateLimited $e) { respond_json(['ok' => false, 'error' => $e->getMessage(), 'code' => 'site_quota'], 429);
 } catch (Throwable $e) { respond_json(['ok' => false, 'error' => 'Анализът не завърши. Провери настройките на Gemini или опитай по-късно.'], 502); }

@@ -1,7 +1,7 @@
 "use strict";
 
 // Заявка към Gemini се изпраща само от бутона в този изглед.
-const NEWS_AI = { results: new Map(), busy: false, error: "", selected: new Map() };
+const NEWS_AI = { results: new Map(), busy: false, error: "", errorCode: "", selected: new Map() };
 const AI_LABELS = { normal: "Нормални условия", caution: "Внимание", pause: "Пауза за нови входове", insufficient_data: "Недостатъчно данни" };
 
 function newsAIButton(event, signal = null) {
@@ -39,7 +39,7 @@ function viewNewsAnalysis(id) {
       ${!options.length ? '<p class="what">Няма активен или чакащ сигнал за тази валута в избрания стил. Можеш да поискаш общо обяснение.</p>' : ""}
       <button type="button" class="btn btn-primary" data-ai-run ${NEWS_AI.busy ? "disabled" : ""}>${NEWS_AI.busy ? "Подготвям обяснението…" : "Попитай Пулс"}</button>
       <p class="what">Изпращат се новината и избраният ценови модел. Балансът, паролата и личното потвърждение за сделка остават при теб.</p>
-      ${NEWS_AI.error ? `<p class="risk-notice" role="alert">${esc(NEWS_AI.error)}</p>` : ""}</section>
+      ${NEWS_AI.error ? `<p class="risk-notice" role="alert">${esc(NEWS_AI.error)}${NEWS_AI.errorCode ? `<small class="validation-note">Код: ${esc(NEWS_AI.errorCode)}</small>` : ""}</p>` : ""}</section>
     <section class="panel" aria-live="polite">${result ? `<span class="pill pill-neutral">${esc(AI_LABELS[result.analysis.status])}</span><h2>${esc(result.analysis.summary)}</h2><p>${esc(result.analysis.relevance)}</p>
       ${section("Възможни сценарии", result.analysis.scenarios)}${section("Какво да провериш", result.analysis.considerations)}${section("Какво още не знаем", result.analysis.limitations)}
       <p class="what">Оценка от ${esc(when(result.generated_at))}. Източник: ${esc(result.source)}. ${result.cached ? "Използвано е запазено обяснение." : ""}</p>
@@ -50,7 +50,7 @@ function viewNewsAnalysis(id) {
 document.addEventListener("change", (event) => {
   if (event.target.id !== "analysis-signal") return;
   NEWS_AI.selected.set(analysisSelection(S.route.id).eventId, event.target.value);
-  NEWS_AI.error = "";
+  NEWS_AI.error = ""; NEWS_AI.errorCode = "";
   render();
 });
 
@@ -59,7 +59,7 @@ document.addEventListener("click", async (event) => {
   const { event: news, signal, key } = analysisSelection(S.route.id);
   if (!news) return;
   NEWS_AI.busy = true;
-  NEWS_AI.error = "";
+  NEWS_AI.error = ""; NEWS_AI.errorCode = "";
   render();
   try {
     const order = signal ? ordersOf(signal).find((o) => !signal.analysis_dir || o.dir === signal.analysis_dir) : null;
@@ -67,7 +67,7 @@ document.addEventListener("click", async (event) => {
       entry: order?.entry, stop: order?.stop } : null;
     const response = await fetch("api/news-ai.php", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event_id: news.id, signal: context }) });
     const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || "Анализът не завърши. Опитай отново.");
+    if (!response.ok || !data.ok) { NEWS_AI.errorCode = data.code || ""; throw new Error(data.error || "Анализът не завърши. Опитай отново."); }
     NEWS_AI.results.set(key, data);
   } catch (error) { NEWS_AI.error = error.message || "Няма връзка с услугата за анализ.";
   } finally { NEWS_AI.busy = false; render(); }

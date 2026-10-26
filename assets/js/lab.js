@@ -7,7 +7,7 @@ const LAB = {
   worker: null, loaded: false, loading: null, loadError: "",
   running: false, progress: null, log: [],
   selected: new Set(), results: {}, published: new Set(), inited: false, dirty: false,
-  custom: [], history: [],
+  custom: [], history: [], geminiCheck: null, geminiChecking: false,
   filter: "all", query: "", form: null, saving: false,
 };
 const GROUP_FILTERS = [["all", "Всички"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
@@ -126,6 +126,9 @@ function labMain(mine = false) {
     <div class="page-heading"><div><p class="kicker">САМО ЗА АДМИНИСТРАТОР</p><h1>${S.route.view === "workshop" ? "Мои стратегии" : "Лаборатория"}</h1>
       <p>${mine ? "Запази идея, провери правилата и я тествай. Черновите и резултатите им остават тук, докато изрично не ги публикуваш." : "Тествай дневните или суинг вариантите. Новите идеи първо минават през исторически тест и отделен период за проверка."}</p></div>
       <div class="chips-row"><a class="btn btn-outline" href="${labBase()}/new">+ Нова стратегия</a></div></div>
+    <details class="panel" style="margin-bottom:14px" ${LAB.geminiChecking || LAB.geminiCheck ? "open" : ""}><summary>Пулс · проверка на Gemini</summary><p class="what">Проверява ключа и достъпните модели, без да заявява анализ. Стойността на ключа не се показва.</p>
+      <button class="btn btn-outline" type="button" data-lab="gemini-check" ${LAB.geminiChecking ? "disabled" : ""}>${LAB.geminiChecking ? "Проверявам връзката…" : "Провери Gemini"}</button>
+      ${LAB.geminiCheck ? `<p role="status">${esc(LAB.geminiCheck.message || LAB.geminiCheck.error)}</p>${LAB.geminiCheck.code ? `<p class="what">Код: ${esc(LAB.geminiCheck.code)}</p>` : ""}${LAB.geminiCheck.models?.length ? `<p class="what">Избран: ${esc(LAB.geminiCheck.configured_model)}. Достъпни: ${LAB.geminiCheck.models.map(esc).join(", ")}</p>` : ""}` : ""}</details>
     <div class="grid-2 even">
       <section class="panel"><p class="kicker">1. ИСТОРИЯ</p><h3 style="margin-bottom:8px">Цени за теста</h3>${loadBox}</section>
       <section class="panel"><p class="kicker">2. ТЕСТ И ПУБЛИКУВАНЕ</p><h3 style="margin-bottom:8px">${tested} тествани · ${good} „Силна“ · ${LAB.published.size} публикувани</h3>
@@ -255,6 +258,16 @@ async function labSave(publish = false) {
     LAB.saving = false;
     labRender();
   }
+}
+
+async function labCheckGemini() {
+  if (LAB.geminiChecking) return;
+  LAB.geminiChecking = true; LAB.geminiCheck = null; render();
+  try {
+    const response = await fetch("api/gemini-check.php", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: LAB.password }) });
+    LAB.geminiCheck = await response.json();
+  } catch (_error) { LAB.geminiCheck = { error: "Не получихме отговор от PHP проверката. Провери дали всички файлове са обновени." }; }
+  finally { LAB.geminiChecking = false; render(); }
 }
 
 /* ------------------------------------------------------------ конструктор */
@@ -484,7 +497,8 @@ document.addEventListener("click", (ev) => {
   const act = t.closest("[data-lab]");
   if (act) {
     const a = act.dataset.lab;
-    if (a === "load") labLoadHistory();
+    if (a === "gemini-check") labCheckGemini();
+    else if (a === "load") labLoadHistory();
     else if (a === "run") labRun();
     else if (a === "save") labSave();
     else if (a === "publish") labSave(true);

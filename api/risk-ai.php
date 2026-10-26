@@ -37,7 +37,8 @@ $config = cfg();
 if (empty($config['gemini_key'])) respond_json(['ok' => false, 'error' => 'Пулс още не е настроен за този сайт. Дневникът и управлението на риска работят без Gemini ключ.', 'code' => 'not_configured'], 503);
 try {
     $context = risk_context($in['trades'], time());
-    respond_json(array_merge(['ok' => true], ai_cached($context, $config, private_dir() . '/ai-cache.json')));
+    respond_json(array_merge(['ok' => true], ai_cached($context, $config, ai_cache_path())));
+} catch (GeminiFailure $e) { ai_failure($e);
 } catch (InvalidArgumentException $e) { respond_json(['ok' => false, 'error' => $e->getMessage()], 400);
-} catch (RateLimited $e) { respond_json(['ok' => false, 'error' => $e->getMessage()], 429);
+} catch (RateLimited $e) { respond_json(['ok' => false, 'error' => $e->getMessage(), 'code' => 'site_quota'], 429);
 } catch (Throwable $e) { respond_json(['ok' => false, 'error' => 'Прегледът не завърши. Провери настройките на Gemini или опитай по-късно.'], 502); }
