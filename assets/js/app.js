@@ -143,6 +143,7 @@ function defaultFollowed() {
 const followedIds = () => S.settings.followed ?? defaultFollowed();
 const isFollowed = (id) => followedIds().includes(id);
 const styleOk = (style) => S.settings.style === style;
+const followedInStyle = () => followedIds().filter((id) => styleOk(stratById(id)?.style));
 
 function mySignals({ all = false } = {}) {
   return (S.data?.signals || []).filter((s) => (all || isFollowed(s.strategy)) && styleOk(s.style));
@@ -603,7 +604,7 @@ function profileStrip() {
       <div class="fact"><span>БАЛАНС</span><strong>${money(st.balance, 0)}</strong></div>
       <div class="fact"><span>РИСК НА СДЕЛКА</span><strong>${F.num(2).format(st.risk)}%</strong><small>= ${money(riskMoney())}</small></div>
       <div class="fact"><span>СТИЛ</span><strong>${STYLE_NAMES[st.style]}</strong></div>
-      <div class="fact"><span>СЛЕДВАШ</span><strong>${followedIds().length} стратегии</strong></div></div>
+      <div class="fact"><span>СЛЕДВАШ</span><strong>${followedInStyle().length} стратегии</strong></div></div>
     <a class="btn btn-outline btn-sm" href="#/settings">Промени</a></section>`;
 }
 
@@ -614,8 +615,8 @@ function viewDashboard() {
   const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
   const highToday = newsFor(MY_CURRENCIES, now(), todayEnd.getTime() / 1000, ["high"]).length;
   const upcoming = newsFor(MY_CURRENCIES, now() - 30 * 60, now() + 48 * 3600, ["high"]).slice(0, 6);
-  const best = sortedStrategies().filter((s) => s.stats.verdict === "good" || s.stats.verdict === "weak").slice(0, 3);
-  const followedCount = followedIds().length;
+  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => s.stats.verdict === "good" || s.stats.verdict === "weak").slice(0, 3);
+  const followedCount = followedInStyle().length;
   let sigBody;
   if (!followedCount) sigBody = emptyBox("◈", "Не следваш нито една стратегия", "Избери поне една стратегия и тук ще виждаш нейните сигнали.", `<a class="btn btn-primary" href="#/strategies">Към стратегиите ↗</a>`);
   else if (!current.length) sigBody = emptyBox("⌁", "В момента няма сигнали", `Стратегиите, които следваш, нямат сигнал точно сега. Цените се проверяват на всеки ${d.settings?.refresh_minutes || 10} минути и новите сигнали се появяват тук.`, `<a class="btn btn-outline" href="#/signals">Виж последните приключили ↗</a>`);
@@ -648,7 +649,7 @@ function pricesList() {
 
 function newsCompact(e) {
   return `<div class="news-compact"><span class="when">${esc(when(e.time))}<br><small>${rel(e.time)}</small></span>
-    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e, signal)}</span></div>`;
+    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e)}</span></div>`;
 }
 
 function viewSignals() {
@@ -662,7 +663,7 @@ function viewSignals() {
   const sumR = closedOnly.reduce((a, s) => a + s.r, 0);
   let body;
   if (list.length) body = `<div class="sig-grid">${list.map(signalCard).join("")}</div>`;
-  else if (S.sigFilter === "now") body = emptyBox("⌁", "Няма сигнали в момента", followedIds().length ? "Стратегиите, които следваш, нямат сигнал сега. Новите сигнали се появяват тук автоматично." : "Не следваш нито една стратегия. Избери от раздел „Стратегии“.", `<a class="btn btn-outline" href="#/strategies">Стратегии ↗</a>`);
+  else if (S.sigFilter === "now") body = emptyBox("⌁", "Няма сигнали в момента", followedInStyle().length ? "Стратегиите, които следваш, нямат сигнал сега. Новите сигнали се появяват тук автоматично." : "Не следваш нито една стратегия. Избери от раздел „Стратегии“.", `<a class="btn btn-outline" href="#/strategies">Стратегии ↗</a>`);
   else body = emptyBox("▤", "Няма приключени сигнали", "През последните 14 дни няма приключени сигнали от избраните стратегии.");
   return `
     <div class="page-heading"><div><p class="kicker">СИГНАЛИ</p><h1>Сигнали</h1>
@@ -858,7 +859,7 @@ function viewStrategies() {
       <p>Разгледай тестваните варианти за ${STYLE_NAMES[S.settings.style].toLowerCase()} търговия. Избери кои стратегии да изчисляват сигнали. Оценката не е гаранция за печалба.</p></div>
       <span class="page-flag">${counts.good} силни · ${counts.weak} слаби · ${counts.bad} не работят · ${counts.few} с малко сделки</span></div>
     <div class="filter-bar"><div class="filter-group">
-      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedIds().length})`], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
+      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedInStyle().length})`], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
       ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране (само „Силна“)</button>` : `<span class="muted-small">По подразбиране следваш стратегиите с оценка „Силна“.</span>`}</div>
     <details class="panel" style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Как да чета картите?</summary>
       <div class="tips">
@@ -989,7 +990,7 @@ function viewSettings() {
               <label><input type="radio" name="style" value="swing" ${st.style === "swing" ? "checked" : ""}><span>Суинг</span></label>
 </div>
             <span class="what"><strong>Дневна</strong>: графики 15 минути и 1 час, сделките се затварят до 23:00 същия ден. <strong>Суинг</strong>: графики 4 часа и 1 ден, сделките се държат от няколко дни до няколко седмици, по-малък обем при същия риск.</span></div>
-          <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedIds().length}) ↗</a></div>
+          <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedInStyle().length}) ↗</a></div>
         </form></section>
       <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Стопът определя обема, не обратното.</h3>
         <p>Първо стратегията казва къде е стопът. После сайтът смята колко лота да купиш, така че при стоп планираната загуба да съответства на избрания риск. При гап или приплъзване реалната загуба може да е по-голяма. Затова при широк стоп обемът е малък, а при тесен е по-голям.</p>

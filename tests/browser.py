@@ -61,6 +61,12 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             errors, ai_requests = [], []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("request", lambda request: ai_requests.append(request.url) if "/api/news-ai.php" in request.url or "/api/risk-ai.php" in request.url else None)
+            for route in ["", "strategies", "watch", "news", "settings", "help", "risk", "lab", "workshop"]:
+                page.goto(base + "/#/" + route, wait_until="networkidle")
+                page.wait_for_function("S.data?.ready")
+                assert len(page.locator("#main").inner_text()) > 30, route
+                assert not errors, (route, errors)
+            assert page.locator("[data-trading-style]").count() == 2
             page.goto(base + "/#/workshop", wait_until="networkidle")
             page.locator("#lab-pass").fill("local-browser-test-only")
             page.get_by_role("button", name="Влез", exact=True).click()
