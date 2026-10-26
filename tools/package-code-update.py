@@ -23,8 +23,14 @@ output = root / "downloads/TradePulse24-code-update.zip"
 output.parent.mkdir(exist_ok=True)
 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
     for name in sorted(selected):
-        archive.write(root / name, name)
-    archive.writestr("INSTALL-CODE-UPDATE.txt", """TradePulse24 — обновяване на кода
+        info = zipfile.ZipInfo.from_file(root / name, name)
+        info.external_attr = 0o100644 << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, (root / name).read_bytes())
+    instructions = zipfile.ZipInfo("INSTALL-CODE-UPDATE.txt")
+    instructions.external_attr = 0o100644 << 16
+    instructions.compress_type = zipfile.ZIP_DEFLATED
+    archive.writestr(instructions, """TradePulse24 — обновяване на кода
 
 Направи резервно копие на стария код. Разархивирай съдържанието в папката, където е index.html, и замени съответните кодови файлове.
 
@@ -36,6 +42,7 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
 """)
 with zipfile.ZipFile(output) as archive:
     assert archive.testzip() is None
+    assert all((info.external_attr >> 16) & 0o777 == 0o644 for info in archive.infolist())
     assert not any(name.startswith("data/") and name != "data/private/.htaccess" for name in archive.namelist())
     assert "api/config.php" not in archive.namelist() and "api/config.local.php" not in archive.namelist()
 shutil.copyfile(output, root / "downloads/TradePulse24-gemini-fix.zip")
