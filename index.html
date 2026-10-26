@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1018">
+  <meta name="description" content="Forex сигнали с оценки от исторически тестове, индивидуално следене и изчисление на ориентировъчен лот според риска.">
+  <title>Logo — Сигнали за Forex</title>
+  <link rel="stylesheet" href="assets/base.css">
+  <link rel="stylesheet" href="assets/app.css?v=3">
+  <script src="assets/js/fx-core.js" defer></script>
+  <script src="assets/js/fx-indicators.js" defer></script>
+  <script src="assets/js/fx-series.js" defer></script>
+  <script src="assets/js/fx-backtest.js?v=2" defer></script>
+  <script src="assets/js/fx-strategies.js" defer></script>
+  <script src="assets/js/fx-builder.js" defer></script>
+  <script src="assets/js/fx-library.js" defer></script>
+  <script src="assets/js/fx-engine.js" defer></script>
+  <script src="assets/js/fx-news.js" defer></script>
+  <script src="assets/js/fx-watch.js?v=2" defer></script>
+  <script src="assets/js/app.js?v=3" defer></script>
+  <script src="assets/js/lab.js?v=2" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Главно меню">
+      <a class="brand" href="#/">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span class="brand-text">Logo<span class="brand-dot">.</span><small>FOREX СИГНАЛИ</small></span>
+      </a>
+      <div class="sidebar-kicker">МЕНЮ</div>
+      <nav class="primary-nav" aria-label="Раздели">
+        <a class="nav-item" href="#/" data-route="dashboard"><span class="nav-icon">▦</span> Начало</a>
+        <a class="nav-item" href="#/signals" data-route="signals"><span class="nav-icon">⌁</span> Сигнали <span class="nav-counter" id="nav-signals">0</span></a>
+        <a class="nav-item" href="#/watch" data-route="watch"><span class="nav-icon">◎</span> Следени <span class="nav-counter" id="nav-watches">0</span></a>
+        <a class="nav-item" href="#/strategies" data-route="strategies"><span class="nav-icon">◈</span> Стратегии</a>
+        <a class="nav-item" href="#/news" data-route="news"><span class="nav-icon">◷</span> Новини <span class="nav-counter" id="nav-news">0</span></a>
+      </nav>
+      <div class="sidebar-kicker sidebar-kicker-spaced">ПРОФИЛ</div>
+      <nav class="primary-nav" aria-label="Профил">
+        <a class="nav-item" href="#/settings" data-route="settings"><span class="nav-icon">⚙</span> Настройки</a>
+        <a class="nav-item" href="#/help" data-route="help"><span class="nav-icon">?</span> Как работи</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="side-highlight"><span class="sparkle">◇</span><strong>Първо рискът. После сделката.</strong><p>Лотът се смята от твоя баланс, по избрания риск и стоп; реалната загуба може да е по-голяма.</p></div>
+        <a class="side-account" href="#/settings"><span class="avatar">$</span><div><strong id="side-balance">Въведи баланс</strong><small id="side-risk">Риск 0.5% на сделка</small></div><span class="account-dot"></span></a>
+      </div>
+    </aside>
+
+    <div class="content-shell">
+      <header class="topbar">
+        <a class="mobile-brand" href="#/"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><strong>Logo<span class="brand-dot">.</span></strong></a>
+        <div class="topbar-left"><span class="crumb-muted">Logo</span><span class="crumb-slash">/</span><span id="current-section">Начало</span></div>
+        <div class="topbar-right">
+          <span class="market-closed" id="market-status"><span class="status-dot"></span> Зареждам…</span>
+          <span class="updated-label" id="updated-label"></span>
+          <a class="account-chip" href="#/settings" title="Баланс и риск"><span class="account-icon">$</span><span id="header-balance">Баланс</span></a>
+        </div>
+      </header>
+      <div class="alert-bar" id="alert-bar" hidden></div>
+      <main class="main-content" id="main" tabindex="-1"></main>
+      <footer class="site-footer">
+        <span>© Logo · Стратегии, сравнени чрез исторически тестове</span>
+        <span>Това не е инвестиционен съвет. Търговията с валути носи риск от загуба на вложените пари.</span>
+        <a href="#/lab" class="footer-admin">Лаборатория (админ)</a>
+      </footer>
+    </div>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Мобилно меню">
+    <a href="#/" data-route="dashboard">▦<span>Начало</span></a>
+    <a href="#/signals" data-route="signals">⌁<span>Сигнали</span></a>
+    <a href="#/watch" data-route="watch">◎<span>Следени</span></a>
+    <a href="#/strategies" data-route="strategies">◈<span>Стратегии</span></a>
+    <a href="#/news" data-route="news">◷<span>Новини</span></a>
+    <a href="#/settings" data-route="settings">⚙<span>Профил</span></a>
+  </nav>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

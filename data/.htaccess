@@ -1,0 +1,13 @@
+# В папката с данни няма скриптове: забраняваме изпълнение и служебните файлове.
+Options -Indexes
+<FilesMatch "\.(php|phtml|phar|pl|py|cgi|sh)$">
+  Require all denied
+</FilesMatch>
+<FilesMatch "(\.lock|\.tmp[0-9]*)$">
+  Require all denied
+</FilesMatch>
+<IfModule mod_headers.c>
+  <FilesMatch "^(meta|recent|news|results|custom)\.json$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

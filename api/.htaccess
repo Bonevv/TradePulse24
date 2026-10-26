@@ -1,0 +1,4 @@
+# Настройките и общите функции не се отварят през браузъра.
+<FilesMatch "^(config|config\.local|lib)\.php$">
+  Require all denied
+</FilesMatch>

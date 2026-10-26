@@ -1,0 +1,16 @@
+# Локални ключове и настройки
+/api/config.php
+/api/config.local.php
+.env
+.env.*
+!.env.example
+
+# Генерирани данни при изпълнение
+/data/meta.json
+/data/recent.json
+/data/news.json
+/data/*.lock
+/data/**/*.lock
+/data/*.tmp*
+/data/**/*.tmp*
+*.log
