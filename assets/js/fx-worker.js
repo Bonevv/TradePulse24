@@ -1,12 +1,12 @@
 /* Лабораторията тества стратегиите тук - в отделна нишка, за да не замръзва страницата. */
-importScripts("fx-core.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-engine.js");
+importScripts("fx-core.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-engine.js");
 
 let engine = null;
 let catalog = {};
 
 function buildCatalog(custom) {
   catalog = {};
-  for (const s of FX.CODED.concat(FX.LIBRARY)) catalog[s.key] = s;
+  for (const s of FX.CODED.concat(FX.LIBRARY, FX.RESEARCH || [])) catalog[s.key] = s;
   for (const spec of custom || []) {
     try {
       catalog[spec.key] = FX.build(Object.assign({ origin: "custom", group: "Мои стратегии", source: "Твоя стратегия" }, spec));
@@ -36,6 +36,15 @@ onmessage = (ev) => {
         const t0 = Date.now();
         const res = engine.trades(strat, tf);
         const entry = res.start ? engine.entry(strat, tf, res) : null;
+        if (entry && (strat.origin === "custom" || strat.origin === "research")) {
+          const cutoff = Math.floor(res.start + 0.7 * (res.end - res.start));
+          const training = FX.bt.summarize(res.trades.filter((t) => t.status === "closed" && t.exit_time < cutoff), res.start, cutoff);
+          const holdout = FX.bt.summarize(res.trades.filter((t) => t.status === "closed" && t.signal_time >= cutoff), cutoff, res.end);
+          const passed = training.trades >= 30 && holdout.trades >= 30 && training.avg_r > 0 && holdout.avg_r >= 0.08 && (holdout.profit_factor === null || holdout.profit_factor >= 1.15);
+          entry.validation = { cutoff, training, holdout, passed };
+          entry.version = strat.spec?.version || 1;
+          if (entry.stats.verdict === "good" && !passed) { entry.stats.verdict = "weak"; entry.stats.verdict_label = "Слаба"; entry.validation.note = "Общият тест е положителен, но отделният период още не потвърждава оценка „Силна“."; }
+        }
         postMessage({ type: "result", id: `${key}-${tf}`, entry, ms: Date.now() - t0, done: k, total: m.items.length });
       }
       postMessage({ type: "done" });

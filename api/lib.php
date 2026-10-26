@@ -24,6 +24,10 @@ function cfg(): array
         }
         $c = require __DIR__ . '/config.php';
         if (is_file(__DIR__ . '/config.local.php')) $c = array_merge($c, require __DIR__ . '/config.local.php');
+        foreach (['TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GEMINI_API_KEY' => 'gemini_key', 'GEMINI_MODEL' => 'gemini_model'] as $variable => $key) {
+            $value = getenv($variable);
+            if ($value !== false && $value !== '') $c[$key] = $value;
+        }
     }
     return $c;
 }
@@ -42,7 +46,14 @@ function write_json(string $path, $data): void
     $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($json === false) throw new RuntimeException('JSON грешка: ' . json_last_error_msg());
     if (file_put_contents($tmp, $json, LOCK_EX) === false) throw new RuntimeException("Не мога да запиша $path (провери правата на папка data)");
-    rename($tmp, $path);
+    if (!rename($tmp, $path)) { @unlink($tmp); throw new RuntimeException('Записът не завърши. Провери правата на папката с данни.'); }
+}
+
+function private_dir(): string
+{
+    $dir = DATA_DIR . '/private';
+    if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Няма права за запис на личните настройки.');
+    return $dir;
 }
 
 function http_get(string $url, array $headers = [], int $timeout = 90): string

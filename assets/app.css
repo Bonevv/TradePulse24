@@ -340,3 +340,25 @@ table.data tr:last-child td { border-bottom: 0; }
 /* Броят на действителните цели определя колоните само на широк екран. */
 .levels-mini, .levels-row { grid-template-columns: repeat(var(--target-cols, 4), minmax(0,1fr)); }
 @media (max-width:760px) { .levels-mini, .levels-row { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+/* Изборът на стил остава подръка и на малък екран. */
+.style-switch{display:flex;gap:3px;padding:3px;border:1px solid var(--line,#27333e);border-radius:9px;flex-shrink:0}
+.style-switch button{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;padding:7px 11px;border-radius:6px;cursor:pointer}
+.style-switch button.active{background:#9fe4ac;color:#102016;font-weight:700}
+.ai-link{display:inline-block;margin-top:9px;text-decoration:none;color:#a9e5bc}
+.news-title .what{font-size:12px;line-height:1.6;margin-top:6px}
+.analysis-section{margin-top:20px;border-top:1px solid #26323b;padding-top:16px}
+.analysis-section h3{font-size:15px;margin-bottom:8px}
+.analysis-section li,.risk-tips li{line-height:1.7;margin:8px 0}
+.risk-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}
+.risk-metrics strong{font-size:21px}
+.journal-panel{margin-top:18px}
+.journal-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:16px}
+.journal-form label{display:flex;flex-direction:column;gap:7px}
+.journal-form input,.journal-form select,.journal-form textarea,#analysis-signal,#risk-plan input{box-sizing:border-box;width:100%;min-height:40px;border:1px solid #34424f;border-radius:7px;background:#101922;color:#e8eef0;padding:9px;font:inherit}
+.journal-note{grid-column:1/-1}
+.journal-form .chips-row{grid-column:1/-1}
+.brand-text{font-size:20px!important;letter-spacing:-.6px}
+@media(max-width:1000px){.risk-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-form{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar-right{flex-wrap:wrap;justify-content:flex-end}}
+@media(max-width:600px){.journal-form{grid-template-columns:1fr}.style-switch button{padding:6px 8px}.market-closed,.updated-label{display:none}.topbar{height:auto;min-height:66px;gap:8px}.risk-metrics strong{font-size:17px}.mobile-nav{overflow-x:auto}.mobile-nav a{min-width:46px}.news-row{grid-template-columns:64px 38px 1fr}.news-nums{grid-column:3}}
+
+.validation-note{display:block;max-width:210px;margin-top:6px;font-size:11px;line-height:1.5;color:#a6b5bf}

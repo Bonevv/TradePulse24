@@ -5,28 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1018">
   <meta name="description" content="Forex сигнали с оценки от исторически тестове, индивидуално следене и изчисление на ориентировъчен лот според риска.">
-  <title>Logo — Сигнали за Forex</title>
+  <title>TradePulse24 — Сигнали за Forex</title>
   <link rel="stylesheet" href="assets/base.css">
-  <link rel="stylesheet" href="assets/app.css?v=3">
+  <link rel="stylesheet" href="assets/app.css?v=4">
   <script src="assets/js/fx-core.js" defer></script>
   <script src="assets/js/fx-indicators.js" defer></script>
   <script src="assets/js/fx-series.js" defer></script>
-  <script src="assets/js/fx-backtest.js?v=2" defer></script>
+  <script src="assets/js/fx-backtest.js?v=4" defer></script>
   <script src="assets/js/fx-strategies.js" defer></script>
   <script src="assets/js/fx-builder.js" defer></script>
   <script src="assets/js/fx-library.js" defer></script>
+  <script src="assets/js/fx-candidates.js" defer></script>
   <script src="assets/js/fx-engine.js" defer></script>
   <script src="assets/js/fx-news.js" defer></script>
-  <script src="assets/js/fx-watch.js?v=2" defer></script>
-  <script src="assets/js/app.js?v=3" defer></script>
-  <script src="assets/js/lab.js?v=2" defer></script>
+  <script src="assets/js/fx-watch.js?v=4" defer></script>
+  <script src="assets/js/risk.js" defer></script>
+  <script src="assets/js/news-analysis.js" defer></script>
+  <script src="assets/js/app.js?v=4" defer></script>
+  <script src="assets/js/lab.js?v=4" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Главно меню">
       <a class="brand" href="#/">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
-        <span class="brand-text">Logo<span class="brand-dot">.</span><small>FOREX СИГНАЛИ</small></span>
+        <span class="brand-text">TradePulse24<span class="brand-dot">.</span><small>FOREX СИГНАЛИ</small></span>
       </a>
       <div class="sidebar-kicker">МЕНЮ</div>
       <nav class="primary-nav" aria-label="Раздели">
@@ -36,6 +39,9 @@
         <a class="nav-item" href="#/strategies" data-route="strategies"><span class="nav-icon">◈</span> Стратегии</a>
         <a class="nav-item" href="#/news" data-route="news"><span class="nav-icon">◷</span> Новини <span class="nav-counter" id="nav-news">0</span></a>
       </nav>
+      <nav class="primary-nav" aria-label="Управление на риска"><a class="nav-item" href="#/risk" data-route="risk"><span class="nav-icon">◇</span> Риск и дневник</a></nav>
+      <div class="sidebar-kicker sidebar-kicker-spaced">ЛАБОРАТОРИЯ</div>
+      <nav class="primary-nav" aria-label="Собствени стратегии"><a class="nav-item" href="#/workshop" data-route="workshop"><span class="nav-icon">✎</span> Мои стратегии</a><a class="nav-item" href="#/lab" data-route="lab"><span class="nav-icon">◈</span> Тестове</a></nav>
       <div class="sidebar-kicker sidebar-kicker-spaced">ПРОФИЛ</div>
       <nav class="primary-nav" aria-label="Профил">
         <a class="nav-item" href="#/settings" data-route="settings"><span class="nav-icon">⚙</span> Настройки</a>
@@ -49,9 +55,10 @@
 
     <div class="content-shell">
       <header class="topbar">
-        <a class="mobile-brand" href="#/"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><strong>Logo<span class="brand-dot">.</span></strong></a>
-        <div class="topbar-left"><span class="crumb-muted">Logo</span><span class="crumb-slash">/</span><span id="current-section">Начало</span></div>
+        <a class="mobile-brand" href="#/"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><strong>TradePulse24<span class="brand-dot">.</span></strong></a>
+        <div class="topbar-left"><span class="crumb-muted">TradePulse24</span><span class="crumb-slash">/</span><span id="current-section">Начало</span></div>
         <div class="topbar-right">
+          <div class="style-switch" role="group" aria-label="Стил на търговия"><button type="button" data-trading-style="day">Дневна</button><button type="button" data-trading-style="swing">Суинг</button></div>
           <span class="market-closed" id="market-status"><span class="status-dot"></span> Зареждам…</span>
           <span class="updated-label" id="updated-label"></span>
           <a class="account-chip" href="#/settings" title="Баланс и риск"><span class="account-icon">$</span><span id="header-balance">Баланс</span></a>
@@ -60,7 +67,7 @@
       <div class="alert-bar" id="alert-bar" hidden></div>
       <main class="main-content" id="main" tabindex="-1"></main>
       <footer class="site-footer">
-        <span>© Logo · Стратегии, сравнени чрез исторически тестове</span>
+        <span>© TradePulse24 · Стратегии, сравнени чрез исторически тестове</span>
         <span>Това не е инвестиционен съвет. Търговията с валути носи риск от загуба на вложените пари.</span>
         <a href="#/lab" class="footer-admin">Лаборатория (админ)</a>
       </footer>
@@ -73,6 +80,7 @@
     <a href="#/watch" data-route="watch">◎<span>Следени</span></a>
     <a href="#/strategies" data-route="strategies">◈<span>Стратегии</span></a>
     <a href="#/news" data-route="news">◷<span>Новини</span></a>
+    <a href="#/risk" data-route="risk">◇<span>Риск</span></a>
     <a href="#/settings" data-route="settings">⚙<span>Профил</span></a>
   </nav>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

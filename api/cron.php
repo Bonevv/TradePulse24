@@ -130,6 +130,8 @@ if ($now - (int) ($meta['news_updated'] ?? 0) >= 3600) {
             $cur = strtoupper(trim((string) ($e['country'] ?? '')));
             $id = substr(sha1("$title|$cur|$t"), 0, 12);
             $fresh[$id] = ['id' => $id, 'time' => $t, 'currency' => $cur, 'title' => $title,
+                'actual' => $t <= $now && isset($e['actual']) && is_scalar($e['actual']) ? (string) $e['actual'] : null,
+                'source' => 'ForexFactory — седмичен календар',
                 'impact' => $impact[$e['impact'] ?? ''] ?? 'low', 'forecast' => (string) ($e['forecast'] ?? ''), 'previous' => (string) ($e['previous'] ?? '')];
         }
         // Пазим и събитията от последните 10 дни, които вече не са във фийда.

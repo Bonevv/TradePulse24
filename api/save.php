@@ -5,6 +5,7 @@
  */
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
+require __DIR__ . '/workspace.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') respond_json(['ok' => false, 'error' => 'Само POST'], 405);
 
@@ -23,22 +24,34 @@ if (!is_array($in) || !hash_equals($real, (string) ($in['password'] ?? ''))) {
 $action = (string) ($in['action'] ?? '');
 $payload = $in['payload'] ?? null;
 try {
+    $lock = fopen(private_dir() . '/workspace.lock', 'c');
+    if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Лабораторията е заета. Опитай отново.');
+    $ws = workspace_read();
     switch ($action) {
         case 'check':
-            $meta = read_json(DATA_DIR . '/meta.json', []);
-            respond_json(['ok' => true, 'launch' => $meta['launch'] ?? null]);
-        case 'results':
-            if (!is_array($payload) || !isset($payload['entries']) || !is_array($payload['entries'])) throw new InvalidArgumentException('Липсват резултати');
-            $payload['saved'] = time();
-            write_json(DATA_DIR . '/results.json', $payload);
-            respond_json(['ok' => true, 'saved' => $payload['saved'], 'count' => count($payload['entries'])]);
-        case 'custom':
-            if (!is_array($payload)) throw new InvalidArgumentException('Липсват стратегии');
-            write_json(DATA_DIR . '/custom.json', ['strategies' => array_values($payload), 'saved' => time()]);
             respond_json(['ok' => true]);
+        case 'workspace':
+            respond_json(['ok' => true, 'workspace' => $ws]);
+        case 'custom':
+            if (!is_array($payload)) throw new InvalidArgumentException('Липсват стратегии.');
+            $ws = workspace_custom($payload, $ws);
+            write_json(private_dir() . '/workspace.json', $ws);
+            respond_json(['ok' => true, 'workspace' => $ws]);
+        case 'draft-results':
+        case 'results':
+            if (!is_array($payload) || !is_array($payload['entries'] ?? null)) throw new InvalidArgumentException('Липсват резултати.');
+            $ws = workspace_results($payload['entries'], $ws);
+            if ($action === 'results') {
+                if (!is_array($payload['published'] ?? null)) throw new InvalidArgumentException('Липсва избор за публикуване.');
+                workspace_publish($payload['published'], $ws);
+            }
+            write_json(private_dir() . '/workspace.json', $ws);
+            respond_json(['ok' => true, 'saved' => time(), 'workspace' => $ws]);
         default:
-            respond_json(['ok' => false, 'error' => 'Непознато действие'], 400);
+            respond_json(['ok' => false, 'error' => 'Непознато действие.'], 400);
     }
+} catch (InvalidArgumentException $e) {
+    respond_json(['ok' => false, 'error' => $e->getMessage()], 400);
 } catch (Throwable $e) {
-    respond_json(['ok' => false, 'error' => $e->getMessage()], 500);
+    respond_json(['ok' => false, 'error' => 'Записът не завърши. Провери правата на папката с данни.'], 500);
 }

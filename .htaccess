@@ -20,6 +20,10 @@ DirectoryIndex index.html
   </FilesMatch>
 </IfModule>
 
-<FilesMatch "^(README\.md|.*\.zip)$">
+<FilesMatch "^(README\.md|AGENTS\.md|DEVELOPMENT\.md|CHANGELOG\.md|.*\.zip)$">
   Require all denied
 </FilesMatch>
+
+<If "%{REQUEST_URI} =~ m#(^|/)\.#">
+  Require all denied
+</If>

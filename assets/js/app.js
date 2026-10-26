@@ -1,16 +1,12 @@
 "use strict";
 
-/* =====================================================================
-   Logo — сигнали за Forex
-   Данните идват от сървъра (/api/state). Тук е само показването,
-   калкулаторът за лот и настройките на потребителя (пазят се в браузъра).
-   ===================================================================== */
+// Каталог, сигнали и лични настройки. Цените и новините идват от JSON файловете.
 
 const STORE_KEY = "logo-signals-settings-v1";
-const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "all", followed: null };
+const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null };
 const MY_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CHF", "CAD", "NZD"];
 const CURRENCY_NAMES = { USD: "САЩ", EUR: "Еврозона", GBP: "Великобритания", JPY: "Япония", AUD: "Австралия", CHF: "Швейцария", CAD: "Канада", NZD: "Нова Зеландия", CNY: "Китай", ALL: "Всички" };
-const STYLE_NAMES = { day: "Дневна", swing: "Суинг", all: "Дневна и суинг" };
+const STYLE_NAMES = { day: "Дневна", swing: "Суинг" };
 const VERDICT_ORDER = { good: 0, weak: 1, few: 2, bad: 3 };
 const VERDICT_TIP = {
   good: "Покрива критериите в историческия тест. Това не гарантира печалба занапред.",
@@ -56,7 +52,7 @@ function clean(s) {
   const r = Number(s.risk);
   s.risk = Number.isFinite(r) && r >= 0.1 && r <= 1 ? Math.round(r * 100) / 100 : 0.5;
   s.currency = s.currency === "EUR" ? "EUR" : "USD";
-  s.style = ["all", "day", "swing"].includes(s.style) ? s.style : "all";
+  s.style = ["day", "swing"].includes(s.style) ? s.style : "day";
   s.followed = Array.isArray(s.followed) ? s.followed.filter((x) => typeof x === "string") : null;
   return s;
 }
@@ -146,7 +142,7 @@ function defaultFollowed() {
 }
 const followedIds = () => S.settings.followed ?? defaultFollowed();
 const isFollowed = (id) => followedIds().includes(id);
-const styleOk = (style) => S.settings.style === "all" || S.settings.style === style;
+const styleOk = (style) => S.settings.style === style;
 
 function mySignals({ all = false } = {}) {
   return (S.data?.signals || []).filter((s) => (all || isFollowed(s.strategy)) && styleOk(s.style));
@@ -443,7 +439,7 @@ function watchDetail(sig) {
   </section>`;
 }
 function viewWatch() {
-  const list = S.watch.list();
+  const list = S.watch.list().filter((w) => styleOk(w.snapshot.style || FX.TIMEFRAMES[w.snapshot.tf]?.style));
   const active = list.filter((w) => isCurrent(w.snapshot)).length;
   return `<div class="page-heading"><div><p class="kicker">МОИТЕ СЛЕДЕНИ</p><h1>Следени сигнали</h1>
     <p>Следи отделни сигнали, проверявай кога са достигнали вход, цел или стоп, и потвърждавай отделно позициите си при брокера.</p></div>
@@ -589,12 +585,12 @@ function onboardingCard() {
             <label><input type="radio" name="risk" value="0.25"><span>0.25%</span></label>
             <label><input type="radio" name="risk" value="0.5" checked><span>0.5%<em>препоръчително</em></span></label>
             <label><input type="radio" name="risk" value="1"><span>1%<em>максимум</em></span></label></div>
-          <small>При 0.5% и $2 000 губиш най-много $10 на сделка.</small></div>
+          <small>При 0.5% и $2 000 планираният риск е $10 на сделка.</small></div>
         <div class="onboard-step"><span class="num">СТЪПКА 3</span><strong>Как търгуваш?</strong>
           <div class="choice">
-            <label><input type="radio" name="style" value="day"><span>Дневна</span></label>
-            <label><input type="radio" name="style" value="swing"><span>Суинг</span></label>
-            <label><input type="radio" name="style" value="all" checked><span>И двете</span></label></div>
+            <label><input type="radio" name="style" value="day" ${S.settings.style === "day" ? "checked" : ""}><span>Дневна</span></label>
+            <label><input type="radio" name="style" value="swing" ${S.settings.style === "swing" ? "checked" : ""}><span>Суинг</span></label>
+</div>
           <small>Дневна: сделките се затварят до вечерта. Суинг: държат се няколко дни.</small></div>
       </div>
       <button type="submit" class="btn btn-primary">Запази и покажи сигналите ↗</button>
@@ -652,7 +648,7 @@ function pricesList() {
 
 function newsCompact(e) {
   return `<div class="news-compact"><span class="when">${esc(when(e.time))}<br><small>${rel(e.time)}</small></span>
-    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}</span></div>`;
+    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e, signal)}</span></div>`;
 }
 
 function viewSignals() {
@@ -838,31 +834,31 @@ function viewSignal(id) {
       <section class="panel"><div class="panel-head"><div><p class="kicker">СЪВЕТИ</p><h3>Преди да влезеш</h3></div></div>
         <div class="tips">${tipsFor(sig, strat).map(([k, t]) => `<div class="tip ${k}"><span class="tip-icon">${k === "warn" ? "!" : "i"}</span><span>${esc(t)}</span></div>`).join("")}</div></section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">НОВИНИ ЗА ${pairCurrencies(sig.pair).join(" И ")}</p><h3>Какво да следиш</h3></div><a class="text-link" href="#/news">Календар ↗</a></div>
-        ${news.length ? news.map(newsCompactWithImpact).join("") : `<p class="muted" style="font-size:12px">Няма важни новини за ${pairCurrencies(sig.pair).join(" и ")} докато сигналът е активен.</p>`}
+        ${news.length ? news.map((e) => newsCompactWithImpact(e, sig)).join("") : `<p class="muted" style="font-size:12px">Няма важни новини за ${pairCurrencies(sig.pair).join(" и ")} докато сигналът е активен.</p>`}
         <p class="what">Часовете са по твоето време (${esc(TZ)}).</p></section>
     </div></div>`;
 }
 
-function newsCompactWithImpact(e) {
+function newsCompactWithImpact(e, signal = null) {
   return `<div class="news-compact ${e.time < now() ? "past" : ""}"><span class="when">${esc(when(e.time))}<br><small>${rel(e.time)}</small></span>
-    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.explain ? `<small>${esc(e.explain)}</small>` : ""}</span></div>`;
+    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e, signal)}</span></div>`;
 }
 
 function viewStrategies() {
   const f = S.stratFilter;
-  const list = sortedStrategies().filter((e) => f === "all"
+  const list = sortedStrategies().filter((e) => styleOk(e.style)).filter((e) => f === "all"
     || (f === "followed" && isFollowed(e.id))
     || (f === "good" || f === "weak" || f === "bad" || f === "few") && e.stats.verdict === f
     || ((f === "day" || f === "swing") && e.style === f)
     || (f === "gold" && (e.pairs || []).includes("XAUUSD")));
   const counts = { good: 0, weak: 0, bad: 0, few: 0 };
-  strategies().forEach((e) => counts[e.stats.verdict]++);
+  strategies().filter((e) => styleOk(e.style)).forEach((e) => counts[e.stats.verdict]++);
   return `
     <div class="page-heading"><div><p class="kicker">СТРАТЕГИИ</p><h1>Стратегии</h1>
-      <p>Сравнявай всички 93 тествани варианта по историческите им резултати. Избери кои стратегии да изчисляват сигнали. Оценката не е гаранция за печалба.</p></div>
+      <p>Разгледай тестваните варианти за ${STYLE_NAMES[S.settings.style].toLowerCase()} търговия. Избери кои стратегии да изчисляват сигнали. Оценката не е гаранция за печалба.</p></div>
       <span class="page-flag">${counts.good} силни · ${counts.weak} слаби · ${counts.bad} не работят · ${counts.few} с малко сделки</span></div>
     <div class="filter-bar"><div class="filter-group">
-      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedIds().length})`], ["day", "Дневна"], ["swing", "Суинг"], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
+      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedIds().length})`], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
       ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране (само „Силна“)</button>` : `<span class="muted-small">По подразбиране следваш стратегиите с оценка „Силна“.</span>`}</div>
     <details class="panel" style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Как да чета картите?</summary>
       <div class="tips">
@@ -964,8 +960,8 @@ function viewNews() {
         <div class="news-row ${e.time < t - 1800 ? "past" : ""} ${next && e.id === next.id ? "next" : ""}">
           <div class="news-time">${F.time.format(new Date(e.time * 1000))}<small>${e.time >= t ? rel(e.time) : "мина"}</small></div>
           <div class="cur-col"><span class="cur" title="${esc(CURRENCY_NAMES[e.currency] || e.currency)}">${esc(e.currency)}</span></div>
-          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}${e.explain ? `<p>${esc(e.explain)}</p>` : ""}</div>
-          <div class="news-nums">${e.forecast ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
+          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}${e.explain ? `<p>${esc(e.explain)}</p><p class="what">${esc(FX.newsGuide(e.title).watch)}</p>` : ""}${newsAIButton(e)}</div>
+          <div class="news-nums">${e.actual != null && e.actual !== "" ? `Обявено: <b>${esc(e.actual)}</b><br>` : ""}${e.forecast ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
         </div>`).join("")}</div>`).join("") : emptyBox("◷", "Няма новини за този филтър", "Пробвай „Всички“ или махни „Само за моите валути“.")}
       <p class="disclaimer">Източник: ${esc(S.data?.sources?.news || "")}. Обновено ${updated ? rel(updated) : "—"}. Показва се текущата седмица. „Очаквано“ е прогнозата на анализаторите. Ако истинската стойност е много различна, цената обикновено реагира силно.</p>
     </section>`;
@@ -986,17 +982,17 @@ function viewSettings() {
           <div class="form-field"><label for="set-risk">Риск на една сделка</label>
             <div class="risk-line"><input id="set-risk" name="risk" type="range" min="0.1" max="1" step="0.05" value="${st.risk}"><output id="risk-out">${st.risk}%</output></div>
             <div class="risk-money" id="risk-money">${rm ? `= ${money(rm)} на сделка` : ""}</div>
-            <span class="what">Колко най-много губиш, ако сделката удари стопа. Препоръчително 0.5%, максимум 1%. При 10 загуби подред и 0.5% губиш около 5% от сметката.</span></div>
+            <span class="what">Планираната загуба при достигане на стопа. Препоръчително 0.5%, максимум 1%. При 10 загуби подред и 0.5% губиш около 5% от сметката.</span></div>
           <div class="form-field"><span class="label">Стил на търговия</span>
             <div class="choice">
               <label><input type="radio" name="style" value="day" ${st.style === "day" ? "checked" : ""}><span>Дневна</span></label>
               <label><input type="radio" name="style" value="swing" ${st.style === "swing" ? "checked" : ""}><span>Суинг</span></label>
-              <label><input type="radio" name="style" value="all" ${st.style === "all" ? "checked" : ""}><span>И двете</span></label></div>
-            <span class="what"><strong>Дневна</strong>: графика 1 час, сделките се затварят до 23:00 същия ден. <strong>Суинг</strong>: графики 4 часа и 1 ден, сделките се държат от няколко дни до няколко седмици, по-малък обем при същия риск.</span></div>
+</div>
+            <span class="what"><strong>Дневна</strong>: графики 15 минути и 1 час, сделките се затварят до 23:00 същия ден. <strong>Суинг</strong>: графики 4 часа и 1 ден, сделките се държат от няколко дни до няколко седмици, по-малък обем при същия риск.</span></div>
           <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedIds().length}) ↗</a></div>
         </form></section>
       <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Стопът определя обема, не обратното.</h3>
-        <p>Първо стратегията казва къде е стопът. После сайтът смята колко лота да купиш, така че при стоп да загубиш точно избрания риск. Затова при широк стоп обемът е малък, а при тесен е по-голям.</p>
+        <p>Първо стратегията казва къде е стопът. После сайтът смята колко лота да купиш, така че при стоп планираната загуба да съответства на избрания риск. При гап или приплъзване реалната загуба може да е по-голяма. Затова при широк стоп обемът е малък, а при тесен е по-голям.</p>
         <div class="settings-fact"><span>Пример</span><strong>$2 000 · 0.5% · стоп 20 пипса</strong></div>
         <div class="settings-fact"><span>Риск</span><strong>$10</strong></div>
         <div class="settings-fact"><span>Обем за EUR/USD</span><strong>10 ÷ (20 × $10) = 0.05 лота</strong></div>
@@ -1052,7 +1048,7 @@ function viewHelp() {
 
 /* ------------------------------------------------------------ рамка, маршрути */
 
-const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
+const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Влияние на новината", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
 
 function parseRoute() {
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/");
@@ -1064,7 +1060,8 @@ function parseRoute() {
 function renderChrome() {
   const d = S.data;
   const route = S.route.view;
-  const navRoute = route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route;
+  document.querySelectorAll("[data-trading-style]").forEach((el) => { el.classList.toggle("active", el.dataset.tradingStyle === S.settings.style); el.setAttribute("aria-pressed", String(el.dataset.tradingStyle === S.settings.style)); });
+  const navRoute = route === "analysis" ? "news" : route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route;
   document.querySelectorAll("[data-route]").forEach((el) => {
     const on = el.dataset.route === navRoute;
     el.classList.toggle("active", on);
@@ -1080,7 +1077,7 @@ function renderChrome() {
     ms.innerHTML = `<span class="status-dot ${d.market?.open ? "" : "off"}"></span> ${esc(d.market?.label || "")}`;
     document.getElementById("updated-label").textContent = d.prices_updated ? `Цени: ${rel(d.prices_updated)}` : "";
     document.getElementById("nav-signals").textContent = mySignals().filter(isCurrent).length;
-    document.getElementById("nav-watches").textContent = S.watch.list().length;
+    document.getElementById("nav-watches").textContent = S.watch.list().filter((w) => styleOk(w.snapshot.style || FX.TIMEFRAMES[w.snapshot.tf]?.style)).length;
     const hi = newsFor(MY_CURRENCIES, now(), now() + 24 * 3600, ["high"]).length;
     document.getElementById("nav-news").textContent = hi;
   }
@@ -1091,7 +1088,7 @@ function renderChrome() {
   if (d?.ready && d.market?.open && Object.keys(d.pairs).some((p) => !quoteFresh(p))) msgs.push("Някои котировки са остарели. Не използвай непотвърдени входни нива.");
   bar.hidden = !msgs.length;
   bar.innerHTML = msgs.map(esc).join("<br>");
-  document.title = `${TITLES[route]} · Logo — Сигнали за Forex`;
+  document.title = `${TITLES[route]} · TradePulse24 — Сигнали за Forex`;
 }
 
 function render() {
@@ -1103,7 +1100,7 @@ function render() {
   if (!d?.ready && view !== "lab") { main.innerHTML = viewLoading(); return; }
   const views = {
     dashboard: viewDashboard, signals: viewSignals, watch: viewWatch, signal: () => viewSignal(id), strategies: viewStrategies,
-    strategy: () => viewStrategy(id), news: viewNews, settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
+    strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, analysis: () => viewNewsAnalysis(id), workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
   };
   main.innerHTML = views[view]();
   drawCharts();
@@ -1142,7 +1139,7 @@ async function getJSON(path, fallback) {
 /** Всички стратегии: от кода, от библиотеката и твоите (от конструктора). */
 function buildCatalog(customSpecs) {
   const cat = {};
-  for (const s of FX.CODED.concat(FX.LIBRARY)) cat[s.key] = s;
+  for (const s of FX.CODED.concat(FX.LIBRARY, FX.RESEARCH || [])) cat[s.key] = s;
   for (const spec of customSpecs || []) {
     try { cat[spec.key] = FX.build(Object.assign({ origin: "custom", group: "Мои стратегии", source: "Твоя стратегия" }, spec)); }
     catch (e) { console.warn("Грешка в стратегия", spec.name, e); }
@@ -1171,11 +1168,12 @@ async function load() {
   S.customSpecs = custom.strategies || [];
   buildCatalog(S.customSpecs);
   const entriesMap = (results && results.entries) || {};
-  if (!meta || !recent) {
+  const hasQuotes = Object.values(meta?.quotes || {}).some((q) => Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
+  if (!meta || !recent || !meta.prices_updated || !hasQuotes) {
     S.engine = null;
     S.error = "Липсват текущи цени от cron.php. Показваме само историята на стратегиите, без активни сигнали.";
     S.data = { ready: true,
-      strategies: Object.values(entriesMap).filter((e) => e && e.stats && S.catalog[e.key] && S.catalog[e.key].tfs.includes(e.tf)),
+      strategies: Object.values(entriesMap).filter((e) => e && e.stats && S.catalog[e.key] && S.catalog[e.key].tfs.includes(e.tf) && (S.catalog[e.key].origin !== "custom" || (e.version || 1) === (S.catalog[e.key].spec.version || 1))),
       signals: [], pairs: Object.fromEntries(FX.PAIR_KEYS.map((key) => [key, { ...FX.PAIRS[key], price: null, change_pct: null }])),
       market: FX.marketStatus(now()), common_rules: FX.COMMON_RULES,
       news: (news.events || []).map((e) => { const [bg, ex] = FX.translateNews(e.title); return { ...e, title_bg: bg, explain: ex }; }),
@@ -1189,7 +1187,7 @@ async function load() {
   const eng = new FX.Engine(recent.prices, meta.quotes || {}, { launch: meta.launch }).build(t);
   const published = ((results && results.published) || []).filter((id) => entriesMap[id] && S.catalog[splitId(id)[0]]);
   // Показваме всички тествани варианти, но изчисляваме сигнали само за публикуваните и тези, които потребителят следва.
-  const entries = Object.values(entriesMap).filter((e) => e && e.stats && S.catalog[e.key] && S.catalog[e.key].tfs.includes(e.tf));
+  const entries = Object.values(entriesMap).filter((e) => e && e.stats && S.catalog[e.key] && S.catalog[e.key].tfs.includes(e.tf) && (S.catalog[e.key].origin !== "custom" || (e.version || 1) === (S.catalog[e.key].spec.version || 1)));
   const selected = S.settings.followed ?? entries.filter((e) => e.stats.verdict === "good").map((e) => e.id);
   const runIds = new Set([...published, ...selected, ...S.watch.list().map((w) => w.snapshot?.strategy).filter(Boolean)]);
   const list = [];
@@ -1285,6 +1283,14 @@ function readForm(form) {
 
 document.addEventListener("click", (ev) => {
   const t = ev.target;
+  const style = t.closest("[data-trading-style]");
+  if (style && ["day", "swing"].includes(style.dataset.tradingStyle)) {
+    S.settings.style = style.dataset.tradingStyle;
+    saveSettings();
+    if (typeof LAB !== "undefined") { LAB.selected.clear(); LAB.form = null; }
+    if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; JOURNAL.review = null; }
+    render(); return;
+  }
   const watch = t.closest("[data-watch]");
   if (watch) { ev.preventDefault(); toggleWatch(watch.dataset.watch); return; }
   const unwatch = t.closest("[data-unwatch]");
@@ -1323,6 +1329,7 @@ document.addEventListener("submit", (ev) => {
   const v = readForm(form);
   if (!Number.isFinite(v.balance) || v.balance < 50 || v.balance > 10000000) { toast("Въведи баланс между 50 и 10 000 000."); return; }
   S.settings = clean({ ...S.settings, ...v });
+  if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; JOURNAL.review = null; }
   saveSettings();
   toast("Запазено. Лотът във всеки сигнал вече е за твоя баланс.");
   if (form.id === "onboard-form") render(); else location.hash = "#/";

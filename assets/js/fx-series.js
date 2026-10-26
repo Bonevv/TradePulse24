@@ -28,7 +28,7 @@
       this._base = false;
     }
 
-    /** Основните индикатори (както в Python версията) - смятат се при първо поискване. */
+    /** Основните индикатори - смятат се при първо поискване. */
     base() {
       if (!this._base) {
         const { h, l, c } = this;
@@ -76,6 +76,9 @@
         const { o, h, l, c } = this;
         let v;
         switch (name) {
+          case "kama": v = I.kama(c, ...args); break;
+          case "demarker": v = I.demarker(h, l, ...args); break;
+          case "rvi": v = I.rvi(o, h, l, c, ...args); break;
           case "ema": v = I.ema(c, args[0]); break;
           case "sma": v = I.sma(c, args[0]); break;
           case "rsi": v = I.rsi(c, args[0]); break;

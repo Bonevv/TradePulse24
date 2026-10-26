@@ -341,4 +341,38 @@
 
   /** SSL канал: [горна, долна] = SMA на върховете и дъната. */
   I.ssl = (h, l, n = 10) => [I.sma(h, n), I.sma(l, n)];
+  // Използваме само текущата и вече затворените свещи.
+  I.kama = function (c, n = 10, fast = 2, slow = 30) {
+    const out = new Array(c.length).fill(null);
+    if (c.length <= n) return out;
+    let value = c[n - 1];
+    for (let i = n; i < c.length; i++) {
+      let volatility = 0;
+      for (let j = i - n + 1; j <= i; j++) volatility += Math.abs(c[j] - c[j - 1]);
+      const efficiency = volatility ? Math.abs(c[i] - c[i - n]) / volatility : 0;
+      const smoothing = (efficiency * (2 / (fast + 1) - 2 / (slow + 1)) + 2 / (slow + 1)) ** 2;
+      value += smoothing * (c[i] - value);
+      out[i] = value;
+    }
+    return out;
+  };
+  I.demarker = function (h, l, n = 14) {
+    const up = h.map((v, i) => i ? Math.max(0, v - h[i - 1]) : 0);
+    const down = l.map((v, i) => i ? Math.max(0, l[i - 1] - v) : 0);
+    const a = I.sma(up, n), b = I.sma(down, n);
+    return a.map((v, i) => v === null || b[i] === null ? null : v + b[i] ? v / (v + b[i]) : 0.5);
+  };
+  I.rvi = function (o, h, l, c, n = 10) {
+    const numerator = [], denominator = [];
+    const body = c.map((v, j) => v - o[j]), range = h.map((v, j) => v - l[j]);
+    for (let i = 0; i < c.length; i++) {
+      const weight = (values) => i < 3 ? 0 : (values[i] + 2 * values[i - 1] + 2 * values[i - 2] + values[i - 3]) / 6;
+      numerator.push(weight(body));
+      denominator.push(weight(range));
+    }
+    const a = I.sma(numerator, n), b = I.sma(denominator, n);
+    const line = a.map((v, i) => i < n + 2 || v === null || !b[i] ? null : v / b[i]);
+    const signal = line.map((v, i) => i < 3 || [v, line[i - 1], line[i - 2], line[i - 3]].some((x) => x === null) ? null : (v + 2 * line[i - 1] + 2 * line[i - 2] + line[i - 3]) / 6);
+    return [line, signal];
+  };
 })(self.FX = self.FX || {});

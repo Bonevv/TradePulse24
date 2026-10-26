@@ -16,6 +16,9 @@
   // calc(s, p) -> масив или масив от масиви; lines: имена на линиите; center: средата за огледален образ;
   // mirror: коя линия става коя при продажба; label: как се казва на български.
   const IND = (FX.BUILDER_IND = {
+    kama: { label: (p) => `KAMA(${p.join(", ")})`, calc: (s, p) => s.get("kama", ...p), params: [["Период", 10], ["Бърза", 2], ["Бавна", 30]] },
+    demarker: { label: (p) => `DeMarker(${p[0]})`, calc: (s, p) => s.get("demarker", ...p), center: 0.5, params: [["Период", 14]] },
+    rvi: { label: (p, l) => `${l === "signal" ? "Сигналната линия на " : ""}RVI(${p[0]})`, calc: (s, p) => s.get("rvi", ...p), center: 0, lines: ["line", "signal"], params: [["Период", 10]] },
     ema: { label: (p) => `EMA(${p[0]})`, calc: (s, p) => s.get("ema", p[0]), params: [["Период", 20]] },
     sma: { label: (p) => `SMA(${p[0]})`, calc: (s, p) => s.get("sma", p[0]), params: [["Период", 20]] },
     rsi: { label: (p) => `RSI(${p[0]})`, calc: (s, p) => s.get("rsi", p[0]), center: 50, params: [["Период", 14]] },
@@ -217,8 +220,49 @@
 
   /* ---------------------------------------------------------- сглобяване */
 
+  function validateOperand(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return;
+    if (typeof value === "string" && Object.hasOwn(PRICE, value)) return;
+    if (!value || typeof value !== "object" || !IND[value.ind]) throw new Error("Избери познат индикатор или цена.");
+    const def = IND[value.ind], params = value.p || def.params.map((p) => p[1]);
+    if (!Array.isArray(params) || params.length !== def.params.length || params.some((p) => !Number.isFinite(p) || p <= 0 || p > 5000)) throw new Error("Параметрите на индикатора трябва да са положителни числа до 5000.");
+    if (params.some((p, i) => !/×|Отклонения|Ключ/.test(def.params[i][0]) && !Number.isInteger(p))) throw new Error("Периодите на индикаторите трябва да са цели числа.");
+    if (value.tf && !FX.TIMEFRAMES[value.tf]) throw new Error("Непозната графика в условието.");
+    if (value.shift !== undefined && (!Number.isInteger(value.shift) || value.shift < 0 || value.shift > 1000)) throw new Error("Условието може да гледа само настоящи и минали свещи.");
+    if (value.line && (!def.lines || !def.lines.includes(value.line))) throw new Error("Непозната линия на индикатора.");
+  }
+  function validateCondition(condition, depth = 0) {
+    if (!condition || typeof condition !== "object" || depth > 3) throw new Error("Провери вложените условия.");
+    if (condition.pat) { if (!PATTERNS[condition.pat]) throw new Error("Непозната фигура от свещи."); return; }
+    if (condition.hours) { if (condition.hours.length !== 2 || !condition.hours.every(Number.isInteger) || condition.hours[0] < 0 || condition.hours[1] > 24 || condition.hours[0] >= condition.hours[1]) throw new Error("Провери часовете за вход."); return; }
+    if (condition.days) { if (!Array.isArray(condition.days) || !condition.days.length || condition.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error("Провери дните за вход."); return; }
+    if (condition.within !== undefined) { if (!Number.isInteger(condition.within) || condition.within < 1 || condition.within > 100) throw new Error("Избери между 1 и 100 минали свещи."); validateCondition(condition.cond, depth + 1); return; }
+    validateOperand(condition.a);
+    if (["rising", "falling"].includes(condition.op)) { if (condition.n !== undefined && (!Number.isInteger(condition.n) || condition.n < 1 || condition.n > 1000)) throw new Error("Провери периода на сравнението."); return; }
+    if (condition.op === "between") { if (![condition.lo, condition.hi].every(Number.isFinite) || condition.lo > condition.hi) throw new Error("Провери границите на условието."); return; }
+    if (!Object.hasOwn(OP_MIRROR, condition.op)) throw new Error("Непознато сравнение.");
+    validateOperand(condition.b);
+  }
+  FX.validateSpec = function (spec) {
+    if (!spec || !Array.isArray(spec.tfs) || !spec.tfs.length || spec.tfs.some((tf) => !FX.TIMEFRAMES[tf])) throw new Error("Избери дневна или суинг графика.");
+    if (!Array.isArray(spec.when) || !spec.when.length || spec.when.length > 20) throw new Error("Задай между 1 и 20 условия за вход.");
+    spec.when.forEach((c) => validateCondition(c));
+    if (spec.exit_when) { if (!Array.isArray(spec.exit_when) || spec.exit_when.length > 20) throw new Error("Провери условията за изход."); spec.exit_when.forEach((c) => validateCondition(c)); }
+    if (spec.pairs && (!Array.isArray(spec.pairs) || !spec.pairs.length || spec.pairs.some((pair) => !FX.PAIRS[pair]))) throw new Error("Избери валиден инструмент.");
+    const stop = spec.stop || { type: "atr", mult: 1.5 };
+    if (!["atr", "bar", "swing", "line", "pips"].includes(stop.type)) throw new Error("Избери вид стоп.");
+    if (stop.type === "line") validateOperand(stop.a);
+    for (const key of ["mult", "n", "v"]) if (stop[key] !== undefined && (!Number.isFinite(stop[key]) || stop[key] <= 0 || stop[key] > 5000)) throw new Error("Провери разстоянието и периода на стопа.");
+    if (stop.n !== undefined && !Number.isInteger(stop.n)) throw new Error("Периодът за стопа трябва да е цяло число.");
+    const exit = spec.exit || FX.SPLIT;
+    if (!Array.isArray(exit.parts) || !exit.parts.length || exit.parts.length > 4 || exit.parts.some((p) => !Array.isArray(p) || p.length !== 2 || !Number.isFinite(p[0]) || p[0] <= 0 || (p[1] !== null && (!Number.isFinite(p[1]) || p[1] <= 0))) || Math.abs(exit.parts.reduce((sum, p) => sum + p[0], 0) - 1) > 1e-6) throw new Error("Частите на изхода трябва да покриват цялата позиция.");
+    if (spec.trail_line) validateOperand(spec.trail_line);
+    return true;
+  };
+
   /** Прави стратегия (същия вид като тези в кода) от описание. */
   FX.build = function (spec) {
+    FX.validateSpec(spec);
     const sides = spec.side === "long" ? [1] : spec.side === "short" ? [-1] : [1, -1];
     const whenFor = { 1: spec.when, "-1": spec.when.map(mirrorCond) };
     const exitWhen = spec.exit_when ? { 1: spec.exit_when, "-1": spec.exit_when.map(mirrorCond) } : null;
