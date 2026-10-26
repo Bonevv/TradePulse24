@@ -55,10 +55,7 @@ const run = (code) => vm.runInContext(code, sandbox);
   assert.ok(run('FX.newsGuide("Unemployment Rate").explain').includes("пазара на труда"));
   assert.ok(run('FX.RESEARCH.every((s) => s.tfs.every((tf) => ["M15","H1","H4","D1"].includes(tf)))'));
 
-  run('S.data.news=[{id:"direction-check",currency:"USD"}]; S.data.signals=[{id:"two-orders",pair:"EURUSD",tf:"H4",style:"swing",status:"pending",orders:[{dir:1,entry:1.2,stop:1.1},{dir:-1,entry:1.1,stop:1.2}]}]');
-  assert.equal(run('analysisSignals(S.data.news[0]).length'), 2);
-  assert.equal(run('analysisSelection("direction-check/two-orders").signal'), null, "two-sided setup requires explicit direction");
-  assert.equal(run('analysisSelection("direction-check/two-orders~-1").signal.analysis_dir'), -1);
+  assert.ok(run('viewNews()').includes("Защо следим новините"));
   const timestamp = Date.now() / 1000;
   sandbox.fixture = Array.from({ length: 3 }, (_, i) => ({ id: "t" + i, pair: "EURUSD", style: i === 2 ? "swing" : "day", currency: "USD", dir: 1,
     status: i === 2 ? "open" : "closed", risk: 10, risk_pct: 0.5, net: i === 0 ? -10 : 20, opened: timestamp - 3000, closed: timestamp - 100, tag: "plan", note: "" }));

@@ -649,7 +649,7 @@ function pricesList() {
 
 function newsCompact(e) {
   return `<div class="news-compact"><span class="when">${esc(when(e.time))}<br><small>${rel(e.time)}</small></span>
-    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e)}</span></div>`;
+    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${e.explain ? `<small>${esc(e.explain)}</small>` : ""}</span></div>`;
 }
 
 function viewSignals() {
@@ -835,14 +835,14 @@ function viewSignal(id) {
       <section class="panel"><div class="panel-head"><div><p class="kicker">СЪВЕТИ</p><h3>Преди да влезеш</h3></div></div>
         <div class="tips">${tipsFor(sig, strat).map(([k, t]) => `<div class="tip ${k}"><span class="tip-icon">${k === "warn" ? "!" : "i"}</span><span>${esc(t)}</span></div>`).join("")}</div></section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">НОВИНИ ЗА ${pairCurrencies(sig.pair).join(" И ")}</p><h3>Какво да следиш</h3></div><a class="text-link" href="#/news">Календар ↗</a></div>
-        ${news.length ? news.map((e) => newsCompactWithImpact(e, sig)).join("") : `<p class="muted" style="font-size:12px">Няма важни новини за ${pairCurrencies(sig.pair).join(" и ")} докато сигналът е активен.</p>`}
+        ${news.length ? news.map(newsCompactWithImpact).join("") : `<p class="muted" style="font-size:12px">Няма важни новини за ${pairCurrencies(sig.pair).join(" и ")} докато сигналът е активен.</p>`}
         <p class="what">Часовете са по твоето време (${esc(TZ)}).</p></section>
     </div></div>`;
 }
 
-function newsCompactWithImpact(e, signal = null) {
+function newsCompactWithImpact(e) {
   return `<div class="news-compact ${e.time < now() ? "past" : ""}"><span class="when">${esc(when(e.time))}<br><small>${rel(e.time)}</small></span>
-    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.explain ? `<small>${esc(e.explain)}</small>` : ""}${newsAIButton(e, signal)}</span></div>`;
+    <span><strong><span class="cur">${esc(e.currency)}</span> ${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.explain ? `<small>${esc(e.explain)}</small>` : ""}</span></div>`;
 }
 
 function viewStrategies() {
@@ -950,6 +950,9 @@ function viewNews() {
     <div class="page-heading"><div><p class="kicker">ИКОНОМИЧЕСКИ КАЛЕНДАР</p><h1>Новини</h1>
       <p>Кога излизат важните данни и решения за лихвите. Около силните новини цената скача и спредът се разширява, затова е добре да ги знаеш предварително.</p></div>
       <span class="page-flag">${next ? `Следваща: ${esc(next.currency)} ${rel(next.time)}` : "Няма предстоящи"}</span></div>
+    <section class="panel"><h2>Защо следим новините</h2>
+      <p>Календарът помага да прецениш кога сигналът може да попадне в по-резки движения, по-широк спред или приплъзване. Провери валутата и часа спрямо сделката си: при дневна търговия е важен близкият час на входа, а при суинг — събитията през целия планиран период.</p>
+      <p class="what">„Висока“ означава очаквано влияние върху пазара, а не посока за покупка или продажба. Прочети обяснението под събитието и сравни прогнозата, предишната и обявената стойност, ако е налична. Докладите и изказванията изискват и преглед на самия текст.</p></section>
     <div class="filter-bar"><div class="filter-group">
       <button class="chip ${S.newsImpact === "h" ? "active" : ""}" data-newsimpact="h">Само силни</button>
       <button class="chip ${S.newsImpact === "hm" ? "active" : ""}" data-newsimpact="hm">Силни и средни</button>
@@ -961,7 +964,7 @@ function viewNews() {
         <div class="news-row ${e.time < t - 1800 ? "past" : ""} ${next && e.id === next.id ? "next" : ""}">
           <div class="news-time">${F.time.format(new Date(e.time * 1000))}<small>${e.time >= t ? rel(e.time) : "мина"}</small></div>
           <div class="cur-col"><span class="cur" title="${esc(CURRENCY_NAMES[e.currency] || e.currency)}">${esc(e.currency)}</span></div>
-          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}${e.explain ? `<p>${esc(e.explain)}</p><p class="what">${esc(FX.newsGuide(e.title).watch)}</p>` : ""}${newsAIButton(e)}</div>
+          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}${e.explain ? `<p>${esc(e.explain)}</p><p class="what">${esc(FX.newsGuide(e.title).watch)}</p>` : ""}</div>
           <div class="news-nums">${e.actual != null && e.actual !== "" ? `Обявено: <b>${esc(e.actual)}</b><br>` : ""}${e.forecast ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
         </div>`).join("")}</div>`).join("") : emptyBox("◷", "Няма новини за този филтър", "Пробвай „Всички“ или махни „Само за моите валути“.")}
       <p class="disclaimer">Източник: ${esc(S.data?.sources?.news || "")}. Обновено ${updated ? rel(updated) : "—"}. Показва се текущата седмица. „Очаквано“ е прогнозата на анализаторите. Ако истинската стойност е много различна, цената обикновено реагира силно.</p>
@@ -1049,7 +1052,7 @@ function viewHelp() {
 
 /* ------------------------------------------------------------ рамка, маршрути */
 
-const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Влияние на новината", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
+const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
 
 function parseRoute() {
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/");
@@ -1062,7 +1065,7 @@ function renderChrome() {
   const d = S.data;
   const route = S.route.view;
   document.querySelectorAll("[data-trading-style]").forEach((el) => { el.classList.toggle("active", el.dataset.tradingStyle === S.settings.style); el.setAttribute("aria-pressed", String(el.dataset.tradingStyle === S.settings.style)); });
-  const navRoute = route === "analysis" ? "news" : route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route;
+  const navRoute = route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route;
   document.querySelectorAll("[data-route]").forEach((el) => {
     const on = el.dataset.route === navRoute;
     el.classList.toggle("active", on);
@@ -1101,7 +1104,7 @@ function render() {
   if (!d?.ready && view !== "lab") { main.innerHTML = viewLoading(); return; }
   const views = {
     dashboard: viewDashboard, signals: viewSignals, watch: viewWatch, signal: () => viewSignal(id), strategies: viewStrategies,
-    strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, analysis: () => viewNewsAnalysis(id), workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
+    strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
   };
   main.innerHTML = views[view]();
   drawCharts();
@@ -1300,7 +1303,7 @@ document.addEventListener("click", (ev) => {
     S.settings.style = style.dataset.tradingStyle;
     saveSettings();
     if (typeof LAB !== "undefined") { LAB.selected.clear(); LAB.form = null; }
-    if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; JOURNAL.review = null; }
+    if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; }
     render(); return;
   }
   const watch = t.closest("[data-watch]");
@@ -1341,7 +1344,7 @@ document.addEventListener("submit", (ev) => {
   const v = readForm(form);
   if (!Number.isFinite(v.balance) || v.balance < 50 || v.balance > 10000000) { toast("Въведи баланс между 50 и 10 000 000."); return; }
   S.settings = clean({ ...S.settings, ...v });
-  if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; JOURNAL.review = null; }
+  if (typeof JOURNAL !== "undefined") { JOURNAL.editing = null; }
   saveSettings();
   toast("Запазено. Лотът във всеки сигнал вече е за твоя баланс.");
   if (form.id === "onboard-form") render(); else location.hash = "#/";

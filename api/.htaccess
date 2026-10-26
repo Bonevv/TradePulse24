@@ -1,4 +1,8 @@
-# Настройките и общите функции не се отварят през браузъра.
-<FilesMatch "^(config(?:\.local|\.example)?|lib|workspace|news-ai-lib)\.php$">
+# През HTTP се изпълняват само обновяването и административният запис.
+# Това спира и останали стари PHP файлове след обновяване на хостинга.
+<FilesMatch "\.php$">
   Require all denied
+</FilesMatch>
+<FilesMatch "^(cron|save)\.php$">
+  Require all granted
 </FilesMatch>

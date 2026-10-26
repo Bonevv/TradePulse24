@@ -50,12 +50,12 @@ function loadJournal() {
 function riskPlan(plan = {}) {
   return Object.fromEntries(Object.entries(RISK_DEFAULTS).map(([key, value]) => [key, Number.isFinite(Number(plan[key])) && Number(plan[key]) > 0 && Number(plan[key]) <= 50 ? Number(plan[key]) : value]));
 }
-const JOURNAL = { ...loadJournal(), editing: null, review: null, busy: false, error: "" };
+const JOURNAL = { ...loadJournal(), editing: null };
 function saveJournal(trades = JOURNAL.trades, plan = JOURNAL.plan) {
   const next = { trades: trades.map(RiskJournal.validate), plan: riskPlan(plan) };
   if (next.trades.length > 1000) throw new Error("Дневникът е пълен. Изтегли копие, преди да започнеш нов.");
   localStorage.setItem(JOURNAL_KEY, JSON.stringify(next));
-  Object.assign(JOURNAL, next, { unreadable: false, review: null });
+  Object.assign(JOURNAL, next, { unreadable: false });
 }
 function journalTrades() { return JOURNAL.trades.filter((t) => t.currency === S.settings.currency); }
 function journalInputDate(timestamp) {
@@ -75,7 +75,6 @@ function viewRisk() {
   const editing = JOURNAL.trades.find((t) => t.id === JOURNAL.editing);
   const trade = editing || { pair: "EURUSD", style: S.settings.style, dir: 1, status: "closed", risk: riskMoney() || "", risk_pct: S.settings.risk, opened: now(), closed: now(), net: "", tag: "plan", note: "" };
   const tags = { plan: "Спазих плана", early: "Прибързан изход", stop: "Промених стопа извън плана", unplanned: "Влязох без потвърждение" };
-  const review = JOURNAL.review;
   return `<div class="page-heading"><div><p class="kicker">РИСК И ДИСЦИПЛИНА</p><h1>Първо пази сметката</h1><p>Планът и дневникът са твои. Тук сравняваш реално отчетените сделки с правилата, които си си поставил.</p></div><span class="page-flag">${esc(S.settings.currency)} · личен дневник</span></div>
     ${JOURNAL.unreadable ? '<p class="risk-notice">Запазеният дневник не може да се прочете. Не е изтрит. Направи резервно копие на данните на браузъра, преди да записваш нови сделки.</p>' : ""}
     ${warnings.length ? `<div class="risk-notice">${warnings.map(esc).join("<br>")}</div>` : ""}
@@ -100,12 +99,7 @@ function viewRisk() {
       <div class="chips-row"><button class="btn btn-primary" ${JOURNAL.unreadable ? "disabled" : ""}>Запази сделката</button>${editing ? '<button type="button" class="btn btn-outline" data-journal-cancel>Откажи</button>' : ""}</div></form></section>
     <section class="panel"><div class="panel-head"><div><h2>Твоите ${STYLE_NAMES[S.settings.style].toLowerCase()} сделки</h2><p class="what">${stats.closed.length} приключили общо · най-дълга серия загуби ${stats.worstStreak} · спад на сбора в R: ${fmtR(-stats.drawdown)}</p></div><div class="chips-row"><button class="tiny-btn" data-journal-export>Изтегли копие</button><label class="tiny-btn">Внеси копие<input type="file" id="journal-import" accept="application/json" hidden></label></div></div>
       ${visible.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Дата</th><th>Сделка</th><th>Риск</th><th>Резултат</th><th>Самооценка</th><th></th></tr></thead><tbody>${visible.map((t) => `<tr><td>${esc(when(t.opened))}</td><td>${t.pair} · ${t.dir === 1 ? "Купи" : "Продай"}</td><td>${t.risk_pct}%</td><td>${t.status === "open" ? "Отворена" : fmtR(t.net / t.risk)}</td><td>${esc(tags[t.tag])}</td><td><button class="tiny-btn" data-journal-edit="${esc(t.id)}">Промени</button> <button class="tiny-btn" data-journal-delete="${esc(t.id)}">Изтрий</button></td></tr>`).join("")}</tbody></table></div>` : '<p>Още няма записи за този стил.</p>'}
-      <p class="what">Дневникът се пази само в този браузър. Изтегляй копие редовно; изчистването на данните на браузъра премахва записите.</p></section>
-    <section class="panel"><p class="kicker">ПУЛС · ПРЕГЛЕД С GEMINI</p><h2>Какво се повтаря в сделките ти?</h2><p>Пулс разглежда размера на риска, резултатите в R и самооценката ти. Търси навици за преглед, а не виновник за всяка загуба.</p>
-      <button class="btn btn-primary" data-risk-ai ${stats.closed.length < 10 || JOURNAL.busy ? "disabled" : ""}>${JOURNAL.busy ? "Преглеждам историята…" : "Поискай преглед от Пулс"}</button>
-      <p class="what">Нужни са поне 10 приключили сделки. Изпращат се до 50 последни записа: инструмент, стил, дата, риск в проценти, резултат в R и самооценка. Сумите, балансът и личните бележки остават в браузъра.</p>
-      ${JOURNAL.error ? `<p class="risk-notice" role="alert">${esc(JOURNAL.error)}</p>` : ""}
-      ${review ? `<div class="analysis-section" aria-live="polite"><h3>${esc(review.analysis.summary)}</h3><p>${esc(review.analysis.relevance)}</p>${[["Какво се откроява", review.analysis.scenarios], ["Какво да опиташ", review.analysis.considerations], ["Граници на оценката", review.analysis.limitations]].map(([title, items]) => `<h3>${title}</h3><ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`).join("")}<p class="what">Преглед от ${esc(when(review.generated_at))}. Ръчно въведена история; няма връзка с брокер.</p></div>` : ""}</section>`;
+      <p class="what">Дневникът се пази само в този браузър. Изтегляй копие редовно; изчистването на данните на браузъра премахва записите.</p></section>`;
 }
 
 document.addEventListener("submit", (event) => {
@@ -128,7 +122,7 @@ document.addEventListener("submit", (event) => {
   } catch (error) { toast(error.message || "Браузърът не позволи записа."); }
 });
 
-document.addEventListener("click", async (event) => {
+document.addEventListener("click", (event) => {
   const target = event.target;
   const edit = target.closest("[data-journal-edit]"), remove = target.closest("[data-journal-delete]");
   if (edit) { JOURNAL.editing = edit.dataset.journalEdit; render(); return; }
@@ -142,16 +136,6 @@ document.addEventListener("click", async (event) => {
     const url = URL.createObjectURL(new Blob([JOURNAL.unreadable ? localStorage.getItem(JOURNAL_KEY) || "" : JSON.stringify({ version: 1, trades: JOURNAL.trades, plan: JOURNAL.plan }, null, 2)], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "tradepulse24-dnevnik.json"; link.click(); URL.revokeObjectURL(url); return;
   }
-  if (!target.closest("[data-risk-ai]") || JOURNAL.busy) return;
-  const trades = RiskJournal.stats(journalTrades()).closed.slice(-50);
-  if (trades.length < 10) return;
-  JOURNAL.busy = true; JOURNAL.error = ""; render();
-  try {
-    const response = await fetch("api/risk-ai.php", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trades: trades.map((t) => ({ pair: t.pair, style: t.style, risk_pct: t.risk_pct, r: t.net / t.risk, date: t.closed, tag: t.tag })) }) });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || "Прегледът не завърши.");
-    JOURNAL.review = data;
-  } catch (error) { JOURNAL.error = error.message; } finally { JOURNAL.busy = false; render(); }
 });
 
 document.addEventListener("change", async (event) => {

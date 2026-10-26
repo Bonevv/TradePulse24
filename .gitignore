@@ -18,3 +18,9 @@
 !/data/private/.htaccess
 
 __pycache__/
+
+# Архивите се изтеглят от GitHub, а временните отчети остават локални.
+*.zip
+/downloads/
+/dist/
+/docs/research/
