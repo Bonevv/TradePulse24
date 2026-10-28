@@ -35,7 +35,14 @@
     donchian: { label: (p, l) => (l === "lower" ? "най-ниското" : "най-високото") + ` от последните ${p[0]} свещи`, calc: (s, p) => s.get("donchian", p[0]), lines: ["upper", "lower"], mirror: { upper: "lower", lower: "upper" }, params: [["Свещи", 20]] },
     st: { label: (p, l) => (l === "dir" ? "посоката на Supertrend" : "линията на Supertrend") + `(${p.join(", ")})`, calc: (s, p) => s.get("st", p[0], p[1]), lines: ["line", "dir"], center: { dir: 0 }, params: [["Период", 10], ["× ATR", 3]] },
     psar: { label: () => "посоката на Параболата (SAR)", calc: (s) => s.get("psar", 0.02, 0.2), center: 0, params: [] },
-    ichi: { label: (p, l) => ({ top: "горния край на облака", bottom: "долния край на облака", tenkan: "Tenkan", kijun: "Kijun" })[l || "top"] + " (Ишимоку)", calc: (s) => { const [a, b, tk, kj] = s.get("ichi"); return [a.map((x, i) => (ok(x) && ok(b[i]) ? Math.max(x, b[i]) : null)), a.map((x, i) => (ok(x) && ok(b[i]) ? Math.min(x, b[i]) : null)), tk, kj]; }, lines: ["top", "bottom", "tenkan", "kijun"], mirror: { top: "bottom", bottom: "top" }, params: [] },
+    ichi: { label: (p, l) => ({ top: "горния край на облака", bottom: "долния край на облака", tenkan: "Tenkan", kijun: "Kijun" })[l || "top"] + " (Ишимоку)", calc: (s) => {
+      // Серията е неизменна. Не пресмятаме целия облак при всяко сравнение на една свещ.
+      if (!s._cache.builder_ichi) {
+        const [a, b, tk, kj] = s.get("ichi");
+        s._cache.builder_ichi = [a.map((x, i) => (ok(x) && ok(b[i]) ? Math.max(x, b[i]) : null)), a.map((x, i) => (ok(x) && ok(b[i]) ? Math.min(x, b[i]) : null)), tk, kj];
+      }
+      return s._cache.builder_ichi;
+    }, lines: ["top", "bottom", "tenkan", "kijun"], mirror: { top: "bottom", bottom: "top" }, params: [] },
     ut: { label: (p) => `линията на UT Bot(${p.join(", ")})`, calc: (s, p) => s.get("ut", p[0], p[1]), params: [["Ключ", 1], ["ATR", 10]] },
     heikin: { label: (p, l) => (l === "open" ? "откриването" : "затварянето") + " на Хейкин Аши", calc: (s) => s.get("heikin"), lines: ["open", "close"], params: [] },
     chandelier: { label: (p, l) => (l === "short" ? "горната" : "долната") + ` линия на Chandelier(${p.join(", ")})`, calc: (s, p) => s.get("chandelier", p[0], p[1]), lines: ["long", "short"], mirror: { long: "short", short: "long" }, params: [["Период", 22], ["× ATR", 3]] },

@@ -10,7 +10,7 @@ const LAB = {
   custom: [], history: [], pulsChecking: false, pulsCheck: null,
   filter: "all", query: "", form: null, saving: false,
 };
-const GROUP_FILTERS = [["all", "Всички"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
+const GROUP_FILTERS = [["all", "Всички"], ["revised", "Преработени"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
 
 function labInit() {
   if (LAB.inited || !S.catalog) return;
@@ -86,17 +86,34 @@ function labRowStats(e) {
   if (!e) return `<td colspan="6" class="muted">За тест</td>`;
   const s = e.stats;
   const omitted = Object.values(e.data_quality?.omitted_days || {}).reduce((sum, n) => sum + n, 0);
-  const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${fmtR(e.validation.holdout.avg_r || 0)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}${e.validation.note ? `<br>${esc(e.validation.note)}` : ""}${omitted ? `<br>Пропуснати непълни сесии по инструменти: ${omitted}.` : ""}</small>` : "";
+  const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${e.validation.holdout.avg_r == null ? "—" : fmtR(e.validation.holdout.avg_r)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}${e.validation.note ? `<br>${esc(e.validation.note)}` : ""}${omitted ? `<br>Пропуснати непълни сесии по инструменти: ${omitted}.` : ""}</small>` : "";
   if (!s.trades) return `<td>${verdictBadge(s)}</td><td colspan="5" class="muted">няма сделки</td>`;
   return `<td>${verdictBadge(s)}${validation}</td><td class="num">${s.trades}</td><td class="num ${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</td>
     <td class="num">${s.profit_factor ?? "∞"}</td><td class="num">${fmtR(s.avg_first)} / ${fmtR(s.avg_second)}</td>
     <td class="num">${s.longs?.avg_r == null ? "—" : fmtR(s.longs.avg_r)} / ${s.shorts?.avg_r == null ? "—" : fmtR(s.shorts.avg_r)}</td>`;
 }
 
+function revisionDetails(strat, entry) {
+  const review = entry?.evaluation, original = entry?.comparison?.original;
+  const r = (v) => Number.isFinite(v) ? fmtR(v) : "—";
+  const compare = review && original ? `<p>Оригинал: ${original.full.trades} сделки, ${r(original.full.avg_r)} средно.<br>Преработка: ${review.full.trades} сделки, ${r(review.full.avg_r)} средно.</p>
+    <p>Последни 30%: оригинал ${original.holdout.trades} / ${r(original.holdout.avg_r)}, преработка ${review.holdout.trades} / ${r(review.holdout.avg_r)}.<br>Преработка при двоен моделен разход: ${r(review.stress.avg_r)} средно.</p>
+    <p class="what">${review.years.map((y) => `${y.year}: ${y.trades} сделки / ${y.avg_r == null ? "—" : fmtR(y.avg_r)}`).join(" · ")}. Годините са диагностични групи; сделките през границите се изключват.</p>` : "";
+  const pairs = entry?.pair_review ? `<p>Подбор по инструменти:</p><ul>${entry.per_pair.map((p) => {
+    const before = entry.comparison?.per_pair?.find((x) => x.pair === p.pair)?.review;
+    return `<li>${esc(p.name)} — ${esc(p.assessment.label)}. ${before ? `Оригинал ${before.full.trades} / ${before.full.avg_r == null ? "—" : fmtR(before.full.avg_r)}, ` : ""}текущ вариант ${p.trades} / ${p.avg_r == null ? "—" : fmtR(p.avg_r)}; последни 30% ${p.review.holdout.trades} / ${p.review.holdout.avg_r == null ? "—" : fmtR(p.review.holdout.avg_r)}.</li>`;
+  }).join("")}</ul>` : "";
+  if (!strat.parent_key && !pairs) return "";
+  return `<details class="lab-rules revision-review"><summary>${strat.parent_key ? "Какво променихме и сравнение" : "Оценка по инструменти"}</summary>
+    ${strat.hypothesis ? `<p>${esc(strat.hypothesis)}</p><ul>${strat.changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}${compare}${pairs}
+    <p class="what">Резултатите остават видими и когато преработката не подобрява оригинала. Публикуването е отделен избор.</p></details>`;
+}
+
 function labFilterMatch(v) {
   const f = LAB.filter, q = LAB.query.trim().toLowerCase();
   if (q && !(`${v.strat.name} ${v.strat.source || ""} ${v.tf}`.toLowerCase().includes(q))) return false;
   if (f === "all") return true;
+  if (f === "revised") return !!v.strat.parent_key;
   if (f === "tested") return !!LAB.results[v.id];
   if (f === "published") return LAB.published.has(v.id);
   return v.strat.group === f;
@@ -153,7 +170,7 @@ function labMain(mine = false) {
         const canCopy = !!v.strat.spec;
         return `<tr class="${LAB.selected.has(v.id) ? "sel" : ""}">
           <td><input type="checkbox" data-lab-sel="${esc(v.id)}" ${LAB.selected.has(v.id) ? "checked" : ""} aria-label="Избери ${esc(v.strat.name)} ${esc(v.tf)}"></td>
-          <td><strong>${esc(v.strat.name)}</strong>${v.strat.version || v.strat.spec?.version ? ` <small>версия ${v.strat.version || v.strat.spec.version}</small>` : ""} <span class="tag tag-${esc(v.strat.origin)}">${esc(v.strat.group)}</span>${v.strat.approx ? ' <span class="tag tag-approx">адаптация</span>' : ""}<br><small class="muted">${esc(v.strat.source || "")}${v.strat.pairs ? ` · ${v.strat.pairs.join(", ")}` : ""}</small>${v.strat.rules?.length ? `<details class="lab-rules"><summary>Правила и изход</summary><ul>${v.strat.rules.concat(v.strat.exit_rules || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${v.strat.note ? `<p class="what">${esc(v.strat.note)}</p>` : ""}</details>` : ""}</td>
+          <td><strong>${esc(v.strat.name)}</strong>${v.strat.version || v.strat.spec?.version ? ` <small>версия ${v.strat.version || v.strat.spec.version}</small>` : ""} <span class="tag tag-${esc(v.strat.origin)}">${esc(v.strat.group)}</span>${v.strat.approx ? ' <span class="tag tag-approx">адаптация</span>' : ""}<br><small class="muted">${esc(v.strat.source || "")}${v.strat.pairs ? ` · ${v.strat.pairs.join(", ")}` : ""}</small>${revisionDetails(v.strat, e)}${v.strat.rules?.length ? `<details class="lab-rules"><summary>Правила и изход</summary><ul>${v.strat.rules.concat(v.strat.exit_rules || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${v.strat.note ? `<p class="what">${esc(v.strat.note)}</p>` : ""}</details>` : ""}</td>
           <td>${esc(FX.TIMEFRAMES[v.tf].label)}</td>${labRowStats(e)}
           <td><label class="switch"><input type="checkbox" data-lab-pub="${esc(v.id)}" ${LAB.published.has(v.id) ? "checked" : ""} ${e ? "" : "disabled"}><span>${LAB.published.has(v.id) ? "да" : "не"}</span></label></td>
           <td>${canCopy ? `<button class="tiny-btn" data-lab-copy="${esc(v.key)}" title="Направи копие и промени правилата">Копие</button>` : ""}${v.strat.origin === "custom" ? ` <a class="tiny-btn" href="${labBase()}/edit/${esc(v.key)}">Промени</a>` : ""}</td></tr>`;

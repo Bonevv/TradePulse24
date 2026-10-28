@@ -115,6 +115,30 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert digest(site / "data/custom.json") == published
             print("OK: authenticated draft, real worker test, private save, version history, explicit publishing and published-rule isolation")
 
+            public_before_revision = digest(site / "data/results.json")
+            page.goto(base + "/#/lab", wait_until="networkidle")
+            page.locator('[data-lab-filter="revised"]').click()
+            assert page.locator('[data-lab-sel]').count() == 9
+            page.locator('[data-trading-style="swing"]').click()
+            assert page.locator('[data-lab-sel]').count() == 22
+            page.locator('[data-lab="select-none"]').click()
+            revised = "rev_book_role_reversal-H4"
+            page.locator(f'[data-lab-sel="{revised}"]').check()
+            page.locator('[data-lab="run"]').click()
+            page.wait_for_function('(id) => !LAB.running && !!LAB.results[id]?.comparison', arg=revised, timeout=90000)
+            page.wait_for_function('document.querySelector(\'[data-lab="run"]\')?.disabled === false')
+            assert page.evaluate('(id) => LAB.results[id].version', revised) == 2
+            assert not page.evaluate('(id) => LAB.published.has(id)', revised)
+            assert page.evaluate('(id) => LAB.results[id].per_pair.every(p => p.review && p.assessment)', revised)
+            row = page.locator(f'tr:has([data-lab-sel="{revised}"])')
+            row.locator('summary').filter(has_text="Какво променихме и сравнение").click()
+            assert "Оригинал:" in row.inner_text() and "двоен моделен разход" in row.inner_text()
+            page.locator('[data-lab="save"]').click()
+            page.wait_for_function('!LAB.saving && !LAB.dirty')
+            assert digest(site / "data/results.json") == public_before_revision
+            page.locator('[data-trading-style="day"]').click()
+            print("OK: scoped revision filters, real revised worker comparison, pair reviews and private save without automatic publishing")
+
             journal_request_start = len(requests)
             page.goto(base + "/#/risk", wait_until="networkidle")
             page.locator('#journal-form [name="risk"]').fill("10")
@@ -132,9 +156,37 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert page.evaluate("RiskJournal.stats(journalTrades()).daily") == 0.5
             page.goto(base + "/#/news", wait_until="networkidle")
             assert "Защо следим новините" in page.locator("#main").inner_text()
-            assert "очакванията" in page.locator("#main").inner_text()
+            assert "Избери дата" in page.locator("#main").inner_text()
+            assert "Europe/Sofia" in page.locator("#main").inner_text()
+            if not page.locator('[data-news-event="browser-boc"]').count():
+                page.locator('[data-news-next]').first.click()
             assert "Банката на Канада" in page.locator("#main").inner_text()
             assert page.locator('a[href^="#/analysis"]').count() >= 1
+            page.evaluate("""() => {
+              const t=Date.now()/1000, title='Calendar elapsed fixture';
+              S.data.news.push({id:'elapsed-fixture',title,title_bg:title,currency:'USD',impact:'high',time:t-60,actual:null,explain:'Статично обяснение.'});
+              S.data.news.push({id:'zero-fixture',title:'Calendar zero fixture',title_bg:'Calendar zero fixture',currency:'CAD',impact:'medium',time:t-90,actual:0});
+              S.data.news.push({id:'tomorrow-fixture',title:'Tomorrow fixture',title_bg:'Tomorrow fixture',currency:'USD',impact:'high',time:t+86400});
+              S.newsDay='today';S.newsShowPast=false;render();
+            }""")
+            assert not page.locator('[data-news-event="elapsed-fixture"]').count()
+            page.locator('[data-newspast]').click()
+            past_day = page.evaluate('FX.calendar.dayKey(Date.now()/1000-60)')
+            if not page.locator('[data-news-event="elapsed-fixture"]').count():
+                page.locator(f'[data-newsday="{past_day}"]').click()
+            assert 'няма резултат в източника' in page.locator('[data-news-event="elapsed-fixture"]').inner_text()
+            assert 'Обявено: 0' in page.locator('[data-news-event="zero-fixture"]').inner_text()
+            page.locator('[data-newspast]').click()
+            assert not page.locator('[data-news-event="elapsed-fixture"]').count()
+            tomorrow = page.evaluate('FX.calendar.dayKey(Date.now()/1000+86400)')
+            page.locator(f'[data-newsday="{tomorrow}"]').click()
+            assert page.locator('[data-news-event="tomorrow-fixture"]').count() == 1
+            assert 'Утре' in page.locator('.news-date-heading').inner_text()
+            page.evaluate("S.data.news=S.data.news.filter(e=>!e.id.endsWith('-fixture'));S.newsDay='today';S.newsShowPast=false;render();")
+            if not page.locator('[data-news-event="browser-boc"]').count():
+                page.locator('[data-news-next]').first.click()
+            print("OK: today/date navigation, hidden past events, explicit unknown result, reported zero and tomorrow selection")
+
             assert all(r.url.startswith(base + "/") or r.url.startswith("blob:") for r in requests)
             for sent in [r for r in requests[journal_request_start:] if r.method == "POST"]:
                 assert sent.url.startswith(base + "/api/save.php"), "Journal records stay in the browser"
@@ -157,7 +209,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             page.get_by_role("button", name="Попитай Пулс", exact=True).click()
             page.wait_for_function("!pulsPage(S.route.id).chat.busy && !!pulsPage(S.route.id).chat.error")
             assert "not_configured" in page.locator('#main').inner_text()
-            page.evaluate("""() => { S.data.signals.push({id:'two-orders',strategy:'lib_golden_cross-H4',strategy_name:'Проверка на посоката',pair:'USDCAD',tf:'H4',style:'swing',status:'pending',orders:[{dir:1,entry:1.4,stop:1.39},{dir:-1,entry:1.39,stop:1.4}]}); render(); }""")
+            page.evaluate("""() => { S.settings.smartPairs=false; S.data.signals.push({id:'two-orders',strategy:'lib_golden_cross-H4',strategy_name:'Проверка на посоката',pair:'USDCAD',tf:'H4',style:'swing',status:'pending',orders:[{dir:1,entry:1.4,stop:1.39},{dir:-1,entry:1.39,stop:1.4}]}); render(); }""")
             assert page.locator('#puls-signal option[value="two-orders~1"]').count() == 1
             assert page.locator('#puls-signal option[value="two-orders~-1"]').count() == 1
             page.locator('#puls-signal').select_option('two-orders~-1')
@@ -223,6 +275,31 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             page.set_viewport_size({"width": 390, "height": 844})
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Mobile layout overflows"
             page.screenshot(path="/tmp/tradepulse24-risk-mobile.png", full_page=True)
+            page.evaluate("""() => {
+              const id='lib_ema_20_50_200-D1', entry=stratById(id);
+              entry.stats={...entry.stats,end:Date.now()/1000};
+              S.settings.style='swing'; S.settings.smartPairs=true; S.settings.followed=[id];
+              S.data.signals=['EURUSD','USDJPY','XAUUSD'].map(pair=>({id:'pair-demo-'+pair,strategy:id,strategy_name:entry.name,pair,pair_name:FX.PAIRS[pair].name,tf:'D1',tf_label:'1 ден',style:'swing',status:'pending',signal_time:Date.now()/1000-600,valid_until:Date.now()/1000+3600,orders:[{type:'stop',dir:1,entry:100,stop:99,targets:[{w:1,level:null}]}]}));
+              location.hash='#/signals'; render();
+            }""")
+            assert page.evaluate('mySignals().map(s=>s.pair)') == ['USDJPY','XAUUSD']
+            assert '1 текущи модела са скрити' in page.locator('#main').inner_text()
+            assert 'Непълна архивна проверка' in page.locator('#main').inner_text()
+            page.evaluate("S.watch.add(S.data.signals[0]); render();")
+            assert page.evaluate('mySignals().length') == 3, "Followed signal remains available after exclusion by instrument"
+            page.evaluate("S.watch.ingest([{...S.data.signals[0],status:'cancelled',reason:'expired',exit_time:Date.now()/1000}]);")
+            assert page.evaluate("S.watch.get('pair-demo-EURUSD').snapshot.status") == 'cancelled'
+            page.evaluate("location.hash='#/settings'")
+            page.locator('[name="smartPairs"]').uncheck()
+            page.locator('#set-balance').fill('2000')
+            page.locator('#settings-form button[type="submit"]').click()
+            page.wait_for_function('!S.settings.smartPairs')
+            assert not page.evaluate("JSON.parse(localStorage.getItem(STORE_KEY)).smartPairs")
+            page.evaluate("location.hash='#/strategy/lib_ema_20_50_200-D1';render();")
+            assert page.locator('.pair-review-table').count() == 1
+            assert "Непълна архивна проверка" in page.locator('.pair-review-table').inner_text()
+            assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), "Pair review overflows mobile viewport"
+            print("OK: user's instrument table, default selection, explanatory labels, followed-signal updates, settings persistence and mobile pair table")
             broken = browser.new_page()
             broken.route("**/assets/js/fx-core.js*", lambda route: route.abort())
             broken.goto(base + "/#/", wait_until="networkidle")

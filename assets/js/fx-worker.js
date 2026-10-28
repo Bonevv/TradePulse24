@@ -1,5 +1,5 @@
 /* Лабораторията тества стратегиите тук - в отделна нишка, за да не замръзва страницата. */
-importScripts("fx-core.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-engine.js");
+importScripts("fx-core.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-revisions.js", "fx-evaluation.js", "fx-engine.js");
 
 let engine = null;
 let catalog = {};
@@ -46,6 +46,17 @@ onmessage = (ev) => {
           entry.version = strat.version || strat.spec?.version || 1;
           if (strat.provisional) entry.validation.note = "Историята вече е разглеждана. Това е диагностичен период; за потвърждение трябват неизползвани данни или наблюдение занапред.";
           if (entry.stats.verdict === "good" && !passed) { entry.stats.verdict = "weak"; entry.stats.verdict_label = "Слаба"; entry.validation.note = "Общият тест е положителен, но отделният период още не потвърждава оценка „Силна“."; }
+        }
+        if (entry) {
+          FX.reviewEntry(entry, strat, res, engine.now);
+          if (strat.parent_key) {
+            const parent = catalog[strat.parent_key], original = engine.trades(parent, tf);
+            entry.parent_key = strat.parent_key;
+            entry.changes = strat.changes;
+            entry.hypothesis = strat.hypothesis;
+            entry.comparison = { id: `${parent.key}-${tf}`, name: parent.name, original: FX.evaluate(original.trades, original.start, original.end),
+              per_pair: (parent.pairs || FX.PAIR_KEYS).map((pair) => ({ pair, review: FX.evaluate(original.trades.filter((t) => t.pair === pair), original.start, original.end) })) };
+          }
         }
         postMessage({ type: "result", id: `${key}-${tf}`, entry, ms: Date.now() - t0, done: k, total: m.items.length });
       }

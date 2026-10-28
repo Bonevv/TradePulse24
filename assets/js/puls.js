@@ -70,7 +70,7 @@ function newsPulsButton(event, signal = null) {
 function pulsSignals(event) {
   const choices = [];
   for (const signal of S.data?.signals || []) {
-    if (!["pending", "open"].includes(signal.status) || !styleOk(signal.style || FX.TIMEFRAMES[signal.tf]?.style)) continue;
+    if (!pairSignalVisible(signal) || !["pending", "open"].includes(signal.status) || !styleOk(signal.style || FX.TIMEFRAMES[signal.tf]?.style)) continue;
     if (!pairCurrencies(signal.pair).includes(event.currency)) continue;
     const orders = signal.status === "open" && signal.dir ? [{ dir: signal.dir, entry: signal.fill_price || signal.entry, stop: signal.stop, initial_stop: signal.stop0 }] : signal.orders || [];
     for (const order of orders) if ([-1, 1].includes(order.dir) && order.entry > 0 && order.stop > 0) choices.push({ value: signal.id + "~" + order.dir, signal, order });

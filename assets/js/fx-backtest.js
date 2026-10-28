@@ -107,6 +107,10 @@
     let first = false, gapFill = false;
     const end = t + sec;
     if (st.status === "pending") {
+      if (st.strict_expiry && t >= st.valid_until) {
+        Object.assign(st, { status: "cancelled", reason: "expired", exit_time: st.valid_until });
+        return;
+      }
       // Новите сесийни модели оставят време нивата да бъдат показани преди входа.
       // Ако през това време входът вече е докоснат, не го възстановяваме със задна дата.
       if (st.orders.some((od) => od.activate_after && t < od.activate_after)) {
@@ -240,10 +244,11 @@
       const orders = rawOrders.map((od) => prepare(s, i, od, strat));
       if (!orders.length || orders.some((od) => od === null)) return null;
       let validUntil = addBars(s.t[i], validBars + 1, tf);
-      if (siteDay) validUntil = Math.min(validUntil, FX.localAt(s.t[i], FX.DAY_CLOSE_HOUR - 1));
+      if (siteDay) validUntil = Math.min(validUntil, FX.localAt(s.t[i], strat.pending_close_hour_day || FX.DAY_CLOSE_HOUR - 1));
       return {
         id: `${strat.key}-${tf}-${s.pair}-${s.t[i]}`, pair: s.pair, tf, status: "pending", orders,
         signal_time: s.t[i] + sec, valid_until: validUntil, last_bar: i + validBars, why,
+        ...(strat.strict_expiry ? { strict_expiry: true } : {}),
       };
     }
 

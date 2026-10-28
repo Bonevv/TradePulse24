@@ -56,6 +56,12 @@ const run = (code) => vm.runInContext(code, sandbox);
   assert.ok(run('FX.RESEARCH.every((s) => s.tfs.every((tf) => ["M15","H1","H4","D1"].includes(tf)))'));
 
   assert.ok(run('viewNews()').includes("Защо следим новините"));
+  sandbox.pairFixture = { id: "example-D1", version: 1, stats: { verdict: "bad" },
+    pair_review: { schema: 1, version: 1, data_end: Date.now() / 1000 },
+    per_pair: [{ pair: "USDJPY", assessment: { status: "watch", allowed: true } }] };
+  assert.equal(run('defaultsForEntries([pairFixture])[0]'), "example-D1", "A separately reviewed instrument is not blocked by the aggregate losing rating");
+  run('pairFixture.per_pair[0].assessment.allowed = false');
+  assert.equal(run('defaultsForEntries([pairFixture]).length'), 0);
   const timestamp = Date.now() / 1000;
   sandbox.fixture = Array.from({ length: 3 }, (_, i) => ({ id: "t" + i, pair: "EURUSD", style: i === 2 ? "swing" : "day", currency: "USD", dir: 1,
     status: i === 2 ? "open" : "closed", risk: 10, risk_pct: 0.5, net: i === 0 ? -10 : 20, opened: timestamp - 3000, closed: timestamp - 100, tag: "plan", note: "" }));

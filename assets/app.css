@@ -345,6 +345,19 @@ table.data tr:last-child td { border-bottom: 0; }
 .style-switch button{border:0;background:transparent;color:inherit;font:inherit;font-size:12px;padding:7px 11px;border-radius:6px;cursor:pointer}
 .style-switch button.active{background:#9fe4ac;color:#102016;font-weight:700}
 .news-title .what{font-size:12px;line-height:1.6;margin-top:6px}
+.news-calendar{min-width:0;scroll-margin-top:85px}
+.news-date-picker{display:flex;gap:8px;max-width:100%;overflow-x:auto;padding-bottom:10px}
+.news-date{flex:0 0 112px;display:grid;gap:5px;padding:11px 9px;text-align:left;border:1px solid var(--line);border-radius:10px;background:#111b22;color:#b8c6ce;cursor:pointer}
+.news-date strong{font-size:13px}.news-date span{font-size:11px}.news-date small{font-size:10px;color:#8fa39a}
+.news-date.active{border-color:#b8df83;background:#202e25;color:#e3f1dc}
+.news-date-heading{flex-wrap:wrap;gap:12px;margin-top:12px}.news-date-heading h2{font-size:19px}
+.news-filters{margin:14px 0;display:flex;flex-wrap:wrap;gap:7px}
+.news-help summary,.news-explanation summary{cursor:pointer;font-weight:650}
+.news-help p{margin-top:10px}.news-explanation{margin-top:7px;font-size:12px}
+.news-event-state{display:block;margin-top:5px;font-size:11px;color:#9eb5a7}
+.news-calendar .news-row.past{opacity:.82}.pair-review-table details{min-width:150px;max-width:260px}
+.pair-review-table summary{cursor:pointer}.pair-review-table details p{white-space:normal;line-height:1.55}
+@media(max-width:600px){.news-date{flex-basis:100px}.news-calendar .news-row{grid-template-columns:58px minmax(0,1fr)}.news-calendar .news-row .cur-col{grid-column:2;grid-row:1}.news-calendar .news-row .news-title,.news-calendar .news-row .news-nums{grid-column:1/-1;text-align:left}}
 .risk-tips li{line-height:1.7;margin:8px 0}
 .risk-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}
 .risk-metrics strong{font-size:21px}

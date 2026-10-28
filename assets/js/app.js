@@ -3,7 +3,7 @@
 // Каталог, сигнали и лични настройки. Цените и новините идват от JSON файловете.
 
 const STORE_KEY = "logo-signals-settings-v1";
-const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null };
+const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null, smartPairs: true };
 const MY_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CHF", "CAD", "NZD"];
 const CURRENCY_NAMES = { USD: "САЩ", EUR: "Еврозона", GBP: "Великобритания", JPY: "Япония", AUD: "Австралия", CHF: "Швейцария", CAD: "Канада", NZD: "Нова Зеландия", CNY: "Китай", ALL: "Всички" };
 const STYLE_NAMES = { day: "Дневна", swing: "Суинг" };
@@ -31,6 +31,8 @@ const S = {
   stratFilter: "all",
   newsMine: true,
   newsImpact: "hm",
+  newsDay: "today",
+  newsShowPast: false,
   charts: {},
   timer: null,
   watch: new FXWatch.WatchStore(),
@@ -54,6 +56,7 @@ function clean(s) {
   s.currency = s.currency === "EUR" ? "EUR" : "USD";
   s.style = ["day", "swing"].includes(s.style) ? s.style : "day";
   s.followed = Array.isArray(s.followed) ? s.followed.filter((x) => typeof x === "string") : null;
+  s.smartPairs = s.smartPairs !== false;
   return s;
 }
 
@@ -138,15 +141,31 @@ function sortedStrategies() {
 }
 
 function defaultFollowed() {
-  return strategies().filter((s) => s.stats.verdict === "good").map((s) => s.id);
+  return defaultsForEntries(strategies());
 }
+const defaultsForEntries = (entries) => entries.filter((e) => e.stats.verdict === "good" || e.pair_review && e.per_pair.some((p) => FX.pairChoice(e, p.pair, now()).allowed)).map((e) => e.id);
 const followedIds = () => S.settings.followed ?? defaultFollowed();
 const isFollowed = (id) => followedIds().includes(id);
 const styleOk = (style) => S.settings.style === style;
 const followedInStyle = () => followedIds().filter((id) => styleOk(stratById(id)?.style));
 
 function mySignals({ all = false } = {}) {
-  return (S.data?.signals || []).filter((s) => (all || isFollowed(s.strategy)) && styleOk(s.style));
+  return (S.data?.signals || []).filter((s) => (all || isFollowed(s.strategy)) && styleOk(s.style) && pairSignalVisible(s));
+}
+const signalPairChoice = (sig) => FX.pairChoice(stratById(sig.strategy), sig.pair, now());
+function pairSignalVisible(sig) {
+  return !S.settings.smartPairs || !isCurrent(sig) || watched(sig.id) || signalPairChoice(sig).allowed;
+}
+function pairChoiceText(entry) {
+  const names = (entry.per_pair || []).filter((p) => FX.pairChoice(entry, p.pair, now()).allowed).map((p) => p.name);
+  return names.length ? `Подбор по инструменти: ${names.join(", ")}.` : "Няма инструмент, който да покрива текущия подбор. Пусни пълен тест от Лабораторията.";
+}
+function pairTable(entry) {
+  const r = (v) => Number.isFinite(v) ? fmtR(v) : "—";
+  return `<p class="what">${esc(pairChoiceText(entry))} Оценката е за тази стратегия, графика и инструмент. Печелившият процент сам по себе си не определя избора. Пълен нов тест от Лабораторията добавя проверката 70/30 и разходите.</p>
+    <div class="table-wrap"><table class="data pair-review-table"><thead><tr><th>Двойка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Общо</th><th>Подбор</th><th class="num">Последни 30%</th><th class="num">Двоен разход</th></tr></thead><tbody>
+    ${entry.per_pair.map((p) => { const choice = FX.pairChoice(entry, p.pair, now()); return `<tr><td>${esc(p.name)}</td><td class="num">${p.trades}</td><td class="num">${p.win_rate == null ? "—" : F.num(0).format(p.win_rate) + "%"}</td><td class="num ${p.avg_r >= 0 ? "pos" : "neg"}">${r(p.avg_r)}</td><td class="num">${r(p.total_r)}</td>
+      <td><details><summary class="${choice.allowed ? "pos" : "muted"}">${esc(choice.label)}</summary><p class="what">${esc(choice.reason)}</p>${p.review?.years ? `<p class="what">${p.review.years.map((y) => `${y.year}: ${y.trades} / ${r(y.avg_r)}`).join(" · ")}</p>` : ""}</details></td><td class="num">${p.review ? `${p.review.holdout.trades} / ${r(p.review.holdout.avg_r)}` : "—"}</td><td class="num">${r(p.review?.stress.avg_r)}</td></tr>`; }).join("")}</tbody></table></div>`;
 }
 
 function pairCurrencies(pair) { return [pair.slice(0, 3), pair.slice(3, 6)]; }
@@ -345,6 +364,7 @@ function signalCard(sig) {
   return `<article class="sig-card ${isCurrent(sig) ? "" : "closed"}">
     <a class="sig-card-main" href="#/signal/${encodeURIComponent(sig.id)}"><div class="sig-head"><div class="sig-title">${dirBadge(sig)}<h3>${esc(sig.pair_name)}</h3></div><span class="st ${st.cls}">${esc(st.label)}</span></div>
     <div class="sig-sub">${esc(sig.strategy_name)} · ${esc(sig.tf_label)} · ${STYLE_NAMES[sig.style]} ${strat ? verdictBadge(strat.stats) : ""}</div>
+    <p class="what">${esc(signalPairChoice(sig).label)} за ${esc(sig.pair_name)}.</p>
     ${body}
     ${news ? `<div class="warn-line">⚠ Силна новина за ${esc(news.currency)} ${rel(news.time)}: ${esc(news.title_bg)}</div>` : ""}
     ${freshnessNotice(sig)}
@@ -394,6 +414,7 @@ function stratCard(e) {
     <div class="strat-top"><div><h3><a class="link" style="color:inherit" href="#/strategy/${esc(e.id)}">${esc(e.name)}</a></h3>
       <div class="strat-meta">${esc(e.tf_label)} · ${STYLE_NAMES[e.style]} · ${pairsLabel(e)} ${approximationTag(e)}</div></div>${verdictBadge(s)}</div>
     <p class="strat-short">${esc(e.short)}</p>
+    <p class="what">${esc(pairChoiceText(e))}</p>
     ${sparkline(s.curve)}
     ${stats}
     <div class="strat-foot"><small>${s.trades} сделки · ~${F.num(1).format(s.per_month || 0)} на месец · ${s.trades ? `${F.monthYear.format(new Date(s.start * 1000))} – ${F.monthYear.format(new Date(s.end * 1000))}` : ""}${rm && s.trades ? ` · средно ${rMoney(s.avg_r)} на сделка` : ""}</small>
@@ -654,6 +675,7 @@ function newsCompact(e) {
 
 function viewSignals() {
   const base = mySignals({ all: S.showAll });
+  const hidden = (S.data?.signals || []).filter((sig) => isCurrent(sig) && styleOk(sig.style) && (S.showAll || isFollowed(sig.strategy)) && !pairSignalVisible(sig)).length;
   const q = S.pairQuery.trim().toLowerCase().replace("/", "");
   const match = (s) => !q || s.pair.toLowerCase().includes(q);
   const current = base.filter(isCurrent).filter(match);
@@ -676,6 +698,7 @@ function viewSignals() {
         <button class="chip ${S.showAll ? "active" : ""}" data-showall>${S.showAll ? "✓ " : ""}И от стратегии, които не следвам</button></div>
       <label class="search-wrap"><span>⌕</span><input type="search" id="pair-search" value="${esc(S.pairQuery)}" placeholder="Търси двойка, напр. EUR/USD" aria-label="Търси двойка"></label></div>
     ${S.sigFilter === "done" && closedOnly.length ? `<div class="warn-line info" style="margin:0 0 14px">Последни 14 дни: ${closedOnly.length} сделки, общо ${fmtR(sumR)} (${rMoney(sumR)} при твоя риск). Сделките, които не са се активирали, не носят загуба.</div>` : ""}
+    <p class="what">${S.settings.smartPairs ? `Подборът по инструменти е включен. ${hidden} текущи модела са скрити заради оценката на конкретния инструмент. Следените сигнали остават достъпни.` : "Подборът по инструменти е изключен."} <a href="#/settings">Настройки</a></p>
     ${body}`;
 }
 
@@ -779,6 +802,8 @@ function stepsFor(sig) {
 
 function tipsFor(sig, strat) {
   const tips = [];
+  const pair = signalPairChoice(sig);
+  tips.push([pair.status === "suitable" ? "info" : "warn", `${pair.label} за ${sig.pair_name}. ${pair.reason}`]);
   const hi = newsFor(pairCurrencies(sig.pair), now() - 15 * 60, now() + 3 * 3600, ["high"]);
   if (isCurrent(sig) && !quoteFresh(sig.pair)) tips.push(["warn", "Котировката е остаряла. Не изпълнявай вход или промяна на стоп, докато не провериш данните при брокера."]);
   if (isCurrent(sig) && hi.length) tips.push(["warn", `Силна новина за ${hi[0].currency} ${rel(hi[0].time)}: „${hi[0].title_bg}“. Около новини спредът се разширява и цената скача. По-безопасно е да изчакаш след новината или да пропуснеш.`]);
@@ -862,7 +887,7 @@ function viewStrategies() {
       <span class="page-flag">${counts.good} силни · ${counts.weak} слаби · ${counts.bad} не работят · ${counts.few} с малко сделки</span></div>
     <div class="filter-bar"><div class="filter-group">
       ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedInStyle().length})`], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
-      ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране (само „Силна“)</button>` : `<span class="muted-small">По подразбиране следваш стратегиите с оценка „Силна“.</span>`}</div>
+      ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране</button>` : `<span class="muted-small">По подразбиране: „Силна“ и варианти с отделно оценени подходящи инструменти.</span>`}</div>
     <details class="panel" style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Как да чета картите?</summary>
       <div class="tips">
         <div class="tip"><span class="tip-icon">%</span><span><strong>Печеливши</strong>: от 100 сделки колко са завършили на печалба.</span></div>
@@ -880,7 +905,7 @@ function viewStrategy(id) {
   const s = e.stats;
   const followed = isFollowed(e.id);
   const risk = S.settings.risk;
-  const sigs = (S.data?.signals || []).filter((x) => x.strategy === e.id && isCurrent(x));
+  const sigs = (S.data?.signals || []).filter((x) => x.strategy === e.id && isCurrent(x) && pairSignalVisible(x));
   const live = e.live || {};
   const tiles = s.trades ? `
     <div class="stat-tiles">
@@ -910,8 +935,7 @@ function viewStrategy(id) {
           ${s.yearly.map((y) => `<tr><td>${y.year}</td><td class="num">${y.trades}</td><td class="num ${y.r >= 0 ? "pos" : "neg"}">${fmtR(y.r)}</td><td class="num ${y.r >= 0 ? "pos" : "neg"}">${pct(y.r * risk)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Няма данни.</p>`}
       </section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">ПО ВАЛУТНИ ДВОЙКИ</p><h3>Къде работи най-добре</h3></div></div>
-        ${e.per_pair?.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Двойка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Общо</th></tr></thead><tbody>
-          ${e.per_pair.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${p.trades}</td><td class="num">${F.num(0).format(p.win_rate)}%</td><td class="num ${p.avg_r >= 0 ? "pos" : "neg"}">${fmtR(p.avg_r)}</td><td class="num ${p.total_r >= 0 ? "pos" : "neg"}">${fmtR(p.total_r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Няма данни.</p>`}
+        ${e.per_pair?.length ? pairTable(e) : `<p class="muted">Няма данни.</p>`}
       </section>
     </div><div class="stack">
       <section class="panel"><div class="panel-head"><div><p class="kicker">ПРАВИЛА</p><h3>Как работи</h3></div></div>
@@ -935,42 +959,42 @@ function viewStrategy(id) {
 }
 
 function viewNews() {
-  const all = S.data?.news || [];
   const levels = S.newsImpact === "h" ? ["high"] : S.newsImpact === "hm" ? ["high", "medium"] : ["high", "medium", "low", "holiday"];
-  const list = all.filter((e) => levels.includes(e.impact) && (!S.newsMine || MY_CURRENCIES.includes(e.currency)));
-  const t = now();
-  const next = list.find((e) => e.time >= t);
-  const groups = [];
-  list.forEach((e) => {
-    const key = new Date(e.time * 1000).toDateString();
-    let g = groups[groups.length - 1];
-    if (!g || g.key !== key) { g = { key, label: F.dayLong.format(new Date(e.time * 1000)), items: [] }; groups.push(g); }
-    g.items.push(e);
-  });
-  const updated = S.data?.news_updated;
+  const t = now(), cal = FX.calendar;
+  const selected = cal.view(S.data?.news || [], { now: t, levels, currencies: S.newsMine ? MY_CURRENCIES : null, day: S.newsDay, showPast: S.newsShowPast });
+  const { next, items, past, today } = selected, updated = S.data?.news_updated;
+  const dayLabel = cal.label(selected.selected, today);
   return `
     <div class="page-heading"><div><p class="kicker">ИКОНОМИЧЕСКИ КАЛЕНДАР</p><h1>Новини</h1>
-      <p>Кога излизат важните данни и решения за лихвите. Около силните новини цената скача и спредът се разширява, затова е добре да ги знаеш предварително.</p></div>
-      <span class="page-flag">${next ? `Следваща: ${esc(next.currency)} ${rel(next.time)}` : "Няма предстоящи"}</span></div>
+      <p>Избери дата и виж какво предстои. Миналите събития са скрити, докато не поискаш да провериш резултатите им.</p></div>
+      ${next ? `<button class="chip" data-news-next="${esc(cal.dayKey(next.time))}">Към следващото: ${esc(next.currency)} · ${cal.time(next.time)} · ${esc(cal.label(cal.dayKey(next.time), today))}</button>` : '<span class="page-flag">Няма предстоящи в наличния календар</span>'}</div>
     ${pulsOverview()}
-    <section class="panel"><h2>Защо следим новините</h2>
-      <p>Календарът помага да прецениш кога сигналът може да попадне в по-резки движения, по-широк спред или приплъзване. Провери валутата и часа спрямо сделката си: при дневна търговия е важен близкият час на входа, а при суинг — събитията през целия планиран период.</p>
-      <p class="what">„Висока“ означава очаквано влияние върху пазара, а не посока за покупка или продажба. Прочети обяснението под събитието и сравни прогнозата, предишната и обявената стойност, ако е налична. Докладите и изказванията изискват и преглед на самия текст.</p></section>
-    <div class="filter-bar"><div class="filter-group">
-      <button class="chip ${S.newsImpact === "h" ? "active" : ""}" data-newsimpact="h">Само силни</button>
-      <button class="chip ${S.newsImpact === "hm" ? "active" : ""}" data-newsimpact="hm">Силни и средни</button>
-      <button class="chip ${S.newsImpact === "all" ? "active" : ""}" data-newsimpact="all">Всички</button>
-      <button class="chip ${S.newsMine ? "active" : ""}" data-newsmine>${S.newsMine ? "✓ " : ""}Само за моите валути</button></div>
-      <span class="muted-small">Часовете са по твоето време (${esc(TZ)})</span></div>
-    <section class="panel">
-      ${groups.length ? groups.map((g) => `<div class="news-day"><h3>${esc(g.label)}</h3>${g.items.map((e) => `
-        <div class="news-row ${e.time < t - 1800 ? "past" : ""} ${next && e.id === next.id ? "next" : ""}">
-          <div class="news-time">${F.time.format(new Date(e.time * 1000))}<small>${e.time >= t ? rel(e.time) : "мина"}</small></div>
+    <details class="panel news-help"><summary>Защо следим новините</summary>
+      <p>Календарът помага да прецениш кога сигналът може да попадне в по-резки движения, по-широк спред или приплъзване. При дневна търговия е важен близкият час на входа, а при суинг — събитията през целия планиран период.</p>
+      <p class="what">„Висока“ означава очаквано влияние, а не посока за покупка или продажба. Сравни прогнозата, предишната и обявената стойност, когато е налична. Докладите и изказванията изискват и преглед на самия текст. Миналите събития са полезни за проверка на резултатите и контекста; изминалият час не потвърждава публикуване.</p></details>
+    <section class="panel news-calendar" id="news-calendar" aria-label="Календар по дати">
+      ${!updated || t - updated > 6 * 3600 ? '<p class="warn-line">Календарът не е обновяван скоро. Показват се само записаните събития; липсата на предстояща новина тук не потвърждава, че няма други събития.</p>' : ""}
+      <div class="news-date-picker" role="group" aria-label="Избери дата">${selected.days.map((d) => `<button type="button" class="news-date ${d.key === selected.selected ? "active" : ""}" aria-pressed="${d.key === selected.selected}" data-newsday="${d.key === today ? "today" : esc(d.key)}"><strong>${esc(d.label)}</strong><span>${esc(d.key.split("-").reverse().join("."))}</span><small>${d.count} събития${d.high ? ` · ${d.high} силни` : ""}</small></button>`).join("")}</div>
+      <div class="panel-head news-date-heading"><div><h2>${esc(dayLabel)}</h2><p class="what">Часовете са по Europe/Sofia. ${items.length} ${S.newsShowPast ? "събития" : "предстоящи събития"} за тази дата.</p></div>
+        <button type="button" class="chip ${S.newsShowPast ? "active" : ""}" data-newspast aria-pressed="${S.newsShowPast}">${S.newsShowPast ? "Скрий миналите" : `Покажи миналите (${past})`}</button></div>
+      <div class="filter-group news-filters">
+        <button class="chip ${S.newsImpact === "h" ? "active" : ""}" data-newsimpact="h">Само силни</button>
+        <button class="chip ${S.newsImpact === "hm" ? "active" : ""}" data-newsimpact="hm">Силни и средни</button>
+        <button class="chip ${S.newsImpact === "all" ? "active" : ""}" data-newsimpact="all">Всички</button>
+        <button class="chip ${S.newsMine ? "active" : ""}" data-newsmine>${S.newsMine ? "✓ " : ""}Само за моите валути</button>
+      </div>
+      ${items.length ? items.map((e) => {
+        const elapsed = e.time < t, actual = cal.resultKnown(e, t);
+        const state = elapsed ? actual ? "Резултатът е наличен" : "Часът мина · няма резултат в източника" : "Предстои";
+        return `<article class="news-row ${elapsed ? "past" : ""} ${next && e.id === next.id ? "next" : ""}" data-news-event="${esc(e.id)}">
+          <div class="news-time">${cal.time(e.time)}<small>${elapsed ? "Часът мина" : rel(e.time)}</small></div>
           <div class="cur-col"><span class="cur" title="${esc(CURRENCY_NAMES[e.currency] || e.currency)}">${esc(e.currency)}</span></div>
-          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}${e.explain ? `<p>${esc(e.explain)}</p><p class="what">${esc(FX.newsGuide(e.title).watch)}</p>` : ""}${newsPulsButton(e)}</div>
-          <div class="news-nums">${e.actual != null && e.actual !== "" ? `Обявено: <b>${esc(e.actual)}</b><br>` : ""}${e.forecast ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
-        </div>`).join("")}</div>`).join("") : emptyBox("◷", "Няма новини за този филтър", "Пробвай „Всички“ или махни „Само за моите валути“.")}
-      <p class="disclaimer">Източник: ${esc(S.data?.sources?.news || "")}. Обновено ${updated ? rel(updated) : "—"}. Показва се текущата седмица. „Очаквано“ е прогнозата на анализаторите. Ако истинската стойност е много различна, цената обикновено реагира силно.</p>
+          <div class="news-title"><strong>${esc(e.title_bg)}</strong>${impactPill(e.impact)}<span class="news-event-state">${esc(state)}</span>${e.title_bg !== e.title ? `<span class="orig">${esc(e.title)}</span>` : ""}
+            <details class="news-explanation"><summary>Какво означава</summary><p>${esc(e.explain || FX.newsGuide(e.title).explain)}</p><p class="what">${esc(FX.newsGuide(e.title).watch)}</p></details>${newsPulsButton(e)}</div>
+          <div class="news-nums">${actual ? `Обявено: <b>${esc(e.actual)}</b><br>` : ""}${e.forecast != null && e.forecast !== "" ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous != null && e.previous !== "" ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
+        </article>`;
+      }).join("") : emptyBox("◷", past && !S.newsShowPast ? "Няма повече предстоящи събития за тази дата" : "Няма събития за тази дата и филтър", past && !S.newsShowPast ? `Скрити са ${past} минали събития. Можеш да ги покажеш за проверка или да избереш друга дата.` : "Избери друга дата или промени важността и валутите.", next && cal.dayKey(next.time) !== selected.selected ? `<button class="btn btn-outline" data-news-next="${esc(cal.dayKey(next.time))}">Виж следващото събитие →</button>` : "")}
+      <p class="disclaimer">Източник: ${esc(S.data?.sources?.news || "ForexFactory")}. Календарът е обновен ${updated ? esc(cal.time(updated)) + " · " + esc(cal.dayKey(updated).split("-").reverse().join(".")) : "в неизвестен час"} · Europe/Sofia. Показва се наличната седмица; липсващият резултат остава неизвестен.</p>
     </section>`;
 }
 
@@ -996,6 +1020,8 @@ function viewSettings() {
               <label><input type="radio" name="style" value="swing" ${st.style === "swing" ? "checked" : ""}><span>Суинг</span></label>
 </div>
             <span class="what"><strong>Дневна</strong>: графики 15 минути и 1 час, сделките се затварят до 23:00 същия ден. <strong>Суинг</strong>: графики 4 часа и 1 ден, сделките се държат от няколко дни до няколко седмици, по-малък обем при същия риск.</span></div>
+          <div class="form-field"><label><input type="checkbox" name="smartPairs" ${st.smartPairs ? "checked" : ""}> Подбирай сигналите според инструмента</label>
+            <span class="what">Скрива текущи модели при отрицателна, неустойчива или твърде малка извадка. Положителен стар архив без отделни периоди е означен като непълна проверка. Следените сигнали и историята остават видими.</span></div>
           <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedInStyle().length}) ↗</a></div>
         </form></section>
       <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Стопът определя обема, не обратното.</h3>
@@ -1212,7 +1238,7 @@ async function load() {
   const published = ((results && results.published) || []).filter((id) => entriesMap[id] && S.catalog[splitId(id)[0]]);
   // Показваме всички тествани варианти, но изчисляваме сигнали само за публикуваните и тези, които потребителят следва.
   const entries = Object.values(entriesMap).filter(currentEntry).map(researchEntry);
-  const selected = S.settings.followed ?? entries.filter((e) => e.stats.verdict === "good").map((e) => e.id);
+  const selected = S.settings.followed ?? defaultsForEntries(entries);
   const runIds = new Set([...published, ...selected, ...S.watch.list().map((w) => w.snapshot?.strategy).filter(Boolean)]);
   const list = [];
   for (const id of runIds) {
@@ -1309,6 +1335,7 @@ function readForm(form) {
     currency: f.get("currency"),
     risk: Number(f.get("risk")),
     style: f.get("style"),
+    ...(form.id === "settings-form" ? { smartPairs: f.has("smartPairs") } : {}),
   };
 }
 
@@ -1333,7 +1360,16 @@ document.addEventListener("click", (ev) => {
   if (t.closest("[data-showall]")) { S.showAll = !S.showAll; render(); return; }
   const stf = t.closest("[data-stratfilter]");
   if (stf) { S.stratFilter = stf.dataset.stratfilter; render(); return; }
-  if (t.closest("[data-reset-follow]")) { S.settings.followed = null; saveSettings(); toast("Следваш стратегиите с оценка „Силна“."); render(); load(); return; }
+  if (t.closest("[data-reset-follow]")) { S.settings.followed = null; saveSettings(); toast("Възстановен е изборът по обща оценка и подходящи инструменти."); render(); load(); return; }
+  const newsDay = t.closest("[data-newsday]"), newsNext = t.closest("[data-news-next]");
+  if (newsDay || newsNext) {
+    S.newsDay = newsDay ? newsDay.dataset.newsday : newsNext.dataset.newsNext;
+    if (newsNext) S.newsShowPast = false;
+    render();
+    if (newsNext) document.getElementById("news-calendar")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (t.closest("[data-newspast]")) { S.newsShowPast = !S.newsShowPast; render(); return; }
   const ni = t.closest("[data-newsimpact]");
   if (ni) { S.newsImpact = ni.dataset.newsimpact; render(); return; }
   if (t.closest("[data-newsmine]")) { S.newsMine = !S.newsMine; render(); return; }
