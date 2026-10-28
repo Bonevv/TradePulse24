@@ -74,6 +74,10 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             page.locator('[data-f="name"]').fill("Дневна проверка")
             page.get_by_role("button", name="Запази стратегията", exact=True).click()
             page.wait_for_function("LAB.custom.length === 1 && location.hash === '#/workshop'")
+            page.locator('summary').filter(has_text="Пулс · проверка на Groq").click()
+            page.locator('[data-puls-check]').click()
+            page.wait_for_function("!LAB.pulsChecking && LAB.pulsCheck?.code === 'not_configured'")
+            assert page.evaluate("FX.BOOK_CANDIDATES.length") == 7
             key = page.evaluate("LAB.custom[0].key")
             variant = key + "-H1"
             assert digest(site / "data/results.json") == original_results
@@ -111,6 +115,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert digest(site / "data/custom.json") == published
             print("OK: authenticated draft, real worker test, private save, version history, explicit publishing and published-rule isolation")
 
+            journal_request_start = len(requests)
             page.goto(base + "/#/risk", wait_until="networkidle")
             page.locator('#journal-form [name="risk"]').fill("10")
             page.locator('#journal-form [name="net"]').fill("-10")
@@ -129,18 +134,90 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert "Защо следим новините" in page.locator("#main").inner_text()
             assert "очакванията" in page.locator("#main").inner_text()
             assert "Банката на Канада" in page.locator("#main").inner_text()
-            assert page.locator('a[href^="#/analysis"]').count() == 0
+            assert page.locator('a[href^="#/analysis"]').count() >= 1
             assert all(r.url.startswith(base + "/") or r.url.startswith("blob:") for r in requests)
-            assert not [r for r in requests if r.method == "POST" and not r.url.startswith(base + "/api/save.php")], "Journal and calendar must not submit data"
+            for sent in [r for r in requests[journal_request_start:] if r.method == "POST"]:
+                assert sent.url.startswith(base + "/api/save.php"), "Journal records stay in the browser"
+                payload = json.loads(sent.post_data)
+                assert payload["action"] in ["workspace", "check"]
+                assert not {"trades", "balance", "note", "net", "risk_pct"}.intersection(payload)
+            assert request("/api/puls.php")[0] == 200
+            assert request("/api/puls.php", b'{"action":"check"}')[0] == 403
             assert request("/api/save.php")[0] == 405
             assert request("/api/cron.php")[0] == 403
-            for protected in ["config.php", "config.local.php", "config.example.php", "lib.php", "workspace.php"]:
+            for protected in ["config.php", "config.local.php", "config.example.php", "lib.php", "workspace.php", "puls-lib.php"]:
                 assert request("/api/" + protected)[0] == 403, protected
             # При обновяване с копиране стари файлове могат да останат на хостинга.
             for retired in ["news-ai.php", "risk-ai.php", "gemini-check.php"]:
                 (site / "api" / retired).write_text("<?php echo 'obsolete-code-ran';")
                 code, body = request("/api/" + retired)
                 assert code == 403 and b"obsolete-code-ran" not in body, retired
+            page.locator('a[href^="#/analysis/"]').first.click()
+            page.locator('#puls-question').fill("Какво да следя?")
+            page.get_by_role("button", name="Попитай Пулс", exact=True).click()
+            page.wait_for_function("!pulsPage(S.route.id).chat.busy && !!pulsPage(S.route.id).chat.error")
+            assert "not_configured" in page.locator('#main').inner_text()
+            page.evaluate("""() => { S.data.signals.push({id:'two-orders',strategy:'lib_golden_cross-H4',strategy_name:'Проверка на посоката',pair:'USDCAD',tf:'H4',style:'swing',status:'pending',orders:[{dir:1,entry:1.4,stop:1.39},{dir:-1,entry:1.39,stop:1.4}]}); render(); }""")
+            assert page.locator('#puls-signal option[value="two-orders~1"]').count() == 1
+            assert page.locator('#puls-signal option[value="two-orders~-1"]').count() == 1
+            page.locator('#puls-signal').select_option('two-orders~-1')
+            day = page.evaluate('pulsToday()')
+            overview_response = {"ok": True, "kind": "overview", "day": day, "generated_at": int(time.time()), "data_updated": int(time.time()) - 1800, "model": "test-fixture", "content": {
+                "summary": "Дневен обзор за проверка.", "focus": ["Следим календара."], "day": ["Провери спреда около събитието."], "swing": ["Прегледай отворените позиции."], "unknowns": ["Няма текст на доклада."]}, "sources": [
+                    {"name": "Тестов календар", "url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json", "updated": int(time.time()) - 1800},
+                    {"name": "Тестови котировки", "url": "https://twelvedata.com/", "updated": int(time.time()) - 900}]}
+            counters = {"chat": 0, "overview": 0}
+
+            def assistant_fixture(route):
+                if route.request.method == "GET":
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps({"ok": True, "configured": True, "day": day, "needs_refresh": counters["overview"] == 0, "overview": overview_response if counters["overview"] else None}))
+                    return
+                body = json.loads(route.request.post_data)
+                assert not {"balance", "password", "note", "trades"}.intersection(body)
+                if body["action"] == "overview":
+                    assert set(body) == {"action"}
+                    counters["overview"] += 1
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps(overview_response))
+                    return
+                assert body["action"] == "chat" and body["signal"]["dir"] == -1 and body["signal"]["pair"] == "USDCAD"
+                assert not {"balance", "password", "note", "risk"}.intersection(body["signal"])
+                if counters["chat"]: assert len(body["history"]) == 2
+                counters["chat"] += 1
+                reply = {"ok": True, "kind": "chat", "day": day, "generated_at": int(time.time()), "data_updated": int(time.time()) - 30, "content": {
+                    "answer": '<img src=x onerror="window.bad=true"> Условен сценарий.', "watch": ["Провери прогнозата."], "unknowns": ["Резултатът още не е обявен."]}, "sources": [{"name": "Календар", "url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json"}, {"name": "Невалиден линк", "url": "javascript:window.bad=true"}]}
+                route.fulfill(status=200, content_type="application/json", body=json.dumps(reply))
+
+            page.route("**/api/puls.php", assistant_fixture)
+            page.locator('#puls-question').fill("Как се отнася към продажбата?")
+            page.get_by_role("button", name="Попитай Пулс", exact=True).click()
+            page.wait_for_function("!pulsPage(S.route.id).chat.busy && pulsPage(S.route.id).chat.messages.length === 2")
+            assert page.locator('#main img[src="x"]').count() == 0
+            assert page.locator('#main a[href^="javascript:"]').count() == 0
+            assert not page.evaluate('!!window.bad')
+            page.locator('#puls-question').fill("А след публикуването?")
+            page.get_by_role("button", name="Попитай Пулс", exact=True).click()
+            page.wait_for_function("!pulsPage(S.route.id).chat.busy && pulsPage(S.route.id).chat.messages.length === 4")
+            assert counters["chat"] == 2
+            page.locator('#puls-signal').select_option('two-orders~1')
+            assert page.evaluate('pulsPage(S.route.id).chat.messages.length') == 0
+            page.goto(base + "/#/news", wait_until="networkidle")
+            page.locator('[data-puls-overview]').click()
+            page.wait_for_function('!!PULS.overview.status?.overview && !PULS.overview.generating')
+            assert 'Дневен обзор за проверка.' in page.locator('#main').inner_text()
+            assert 'При дневна търговия' in page.locator('#main').inner_text()
+            assert 'При суинг търговия' in page.locator('#main').inner_text()
+            source_text = page.locator('.puls-overview .puls-sources').inner_text()
+            for source in overview_response["sources"]:
+                assert source["name"] in source_text
+                assert page.evaluate('(t) => pulsTime(t)', source["updated"]) in source_text, "Each source retains its own timestamp"
+            assert page.evaluate('(t) => pulsTime(t)', overview_response["generated_at"]) in source_text
+            page.locator('[data-puls-overview]').click()
+            page.wait_for_function('!PULS.overview.loading && !PULS.overview.generating')
+            assert counters["overview"] == 1, "Rerenders and refresh checks reuse the daily overview"
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "News layout overflows on mobile"
+            page.screenshot(path="/tmp/tradepulse24-news-mobile.png", full_page=True)
+            print("OK: explicit news questions, follow-ups, OCO direction choice, private payload, escaped replies, source links and shared daily overview")
             assert not errors, errors
             page.goto(base + "/#/risk", wait_until="networkidle")
             page.set_viewport_size({"width": 390, "height": 844})
@@ -162,7 +239,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             bad_data.close()
             browser.close()
             print("OK: missing scripts and invalid recent data show a diagnostic instead of a permanent loading screen")
-            print("OK: journal persistence, style selection, portfolio totals, local news explanations, retired endpoint protection and mobile layout")
+            print("OK: journal persistence, style selection, portfolio totals, news explanations, retired endpoint protection, optional assistant and mobile layout")
     finally:
         process.terminate()
         try:

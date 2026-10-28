@@ -359,3 +359,31 @@ table.data tr:last-child td { border-bottom: 0; }
 @media(max-width:600px){.journal-form{grid-template-columns:1fr}.style-switch button{padding:6px 8px}.market-closed,.updated-label{display:none}.topbar{height:auto;min-height:66px;gap:8px}.risk-metrics strong{font-size:17px}.mobile-nav{overflow-x:auto}.mobile-nav a{min-width:46px}.news-row{grid-template-columns:64px 38px 1fr}.news-nums{grid-column:3}}
 
 .validation-note{display:block;max-width:210px;margin-top:6px;font-size:11px;line-height:1.5;color:#a6b5bf}
+
+/* Новини, разговор и дневен обзор */
+.puls-link{display:inline-block;margin-top:8px;color:#a9e5bc;font-size:12px;text-decoration:none}
+.puls-overview{margin-bottom:18px;border-color:#385044}
+.puls-overview h2{font-size:20px}
+.puls-answer{white-space:pre-line;line-height:1.75;overflow-wrap:anywhere}
+.puls-points{padding-left:21px;line-height:1.7;overflow-wrap:anywhere}
+.puls-points li{margin:7px 0}
+.puls-plans{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.puls-plans>div{padding:13px;border:1px solid #2b3742;border-radius:9px}
+.puls-plans .selected{border-color:#719c7d;background:#13231b}
+.puls-plans h3{font-size:15px}
+.puls-limits{margin-top:12px}
+.puls-sources{margin-top:15px;overflow-wrap:anywhere}
+.puls-sources a{color:#a9e5bc}
+.puls-chat{margin-top:16px}
+.puls-chat label{display:block;margin-bottom:8px}
+.puls-chat select,.puls-chat textarea{box-sizing:border-box;width:100%;min-width:0;max-width:100%;border:1px solid #34424f;border-radius:8px;background:#101922;color:#e8eef0;padding:11px;font:inherit}
+.puls-chat textarea{margin-bottom:12px;resize:vertical}
+.puls-message{padding:14px;border-radius:9px;border:1px solid #2b3742;margin:14px 0;overflow-wrap:anywhere}
+.puls-message.user{margin-left:24px;background:#14221c}
+.puls-message.assistant{margin-right:24px;background:#101922}
+.puls-message p{margin-top:8px}
+.puls-setup{margin-bottom:16px}
+.lab-rules{max-width:420px;white-space:normal;line-height:1.6;margin-top:9px}
+.lab-rules summary{cursor:pointer;color:#a9e5bc}
+.lab-rules ul{padding-left:17px;min-width:180px}
+@media(max-width:640px){.puls-plans{grid-template-columns:1fr}.puls-message.user{margin-left:8px}.puls-message.assistant{margin-right:8px}.puls-overview .panel-head{flex-wrap:wrap}}

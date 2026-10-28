@@ -56,7 +56,7 @@
   function open(st, od, price, t, ex) {
     const d = od.dir;
     let stop, ref, dist;
-    if (od.type === "market") { dist = od.stop_dist; stop = price - d * dist; ref = price; }
+    if (od.type === "market") { dist = od.anchor_stop ? Math.abs(price - od.stop) : od.stop_dist; stop = od.anchor_stop ? od.stop : price - d * dist; ref = price; }
     else { stop = od.stop; ref = od.entry; dist = Math.abs(ref - stop); }
     const parts = ex.parts.map(([w, r], k) => ({ w, tp: r ? ref + d * r * dist : od.targets[k].level, px: null }));
     const be = ex.be;
@@ -107,6 +107,13 @@
     let first = false, gapFill = false;
     const end = t + sec;
     if (st.status === "pending") {
+      // Новите сесийни модели оставят време нивата да бъдат показани преди входа.
+      // Ако през това време входът вече е докоснат, не го възстановяваме със задна дата.
+      if (st.orders.some((od) => od.activate_after && t < od.activate_after)) {
+        const early = st.orders.some((od) => od.dir === 1 ? h >= od.entry : l <= od.entry);
+        if (early) Object.assign(st, { status: "cancelled", reason: "void", exit_time: Math.trunc(end) });
+        return;
+      }
       const hits = [];
       st.orders.forEach((od, k) => {
         const typ = od.type, e = od.entry, d = od.dir;
@@ -130,6 +137,10 @@
       }
       if (!hits.length) return;
       const [, k, price] = hits[0];
+      if (st.orders[k].anchor_stop && (price - st.orders[k].stop) * st.orders[k].dir <= 0) {
+        Object.assign(st, { status: "cancelled", reason: "void", exit_time: Math.trunc(t) });
+        return;
+      }
       open(st, st.orders[k], price, t, ex);
       first = true;
       gapFill = price === o;
@@ -191,9 +202,22 @@
     const ownHours = !!strat.own_hours;
     const validBars = strat.valid_bars !== undefined ? strat.valid_bars : tfc.valid_bars;
     const maxBars = strat.max_bars !== undefined ? strat.max_bars : tfc.max_bars;
-    const closeHour = strat.close_hour;
+    const closeHour = strat.close_hour || (tfc.style === "day" ? strat.close_hour_day : null);
+    const maxPerDay = strat.max_per_day || (tfc.style === "day" ? strat.max_per_day_day : null);
     const manage = strat.manage;
     const layers = subs.filter(([sub, subSec]) => sub && subSec < sec).map(([sub, subSec]) => [sub, subSec, subRanges(s, sub, subSec)]);
+    const incomplete = new Set();
+    if (strat.require_session_close && tfc.style === "day") {
+      const dates = new Map();
+      for (let i = 60; i < s.n; i++) {
+        if (s.weekday[i] > 4) continue;
+        const closing = FX.localAt(s.t[i], closeHour || FX.DAY_CLOSE_HOUR);
+        const found = dates.get(s.date[i]) || { closing, complete: false };
+        if (s.t[i] < closing && s.t[i] + sec >= closing) found.complete = true;
+        dates.set(s.date[i], found);
+      }
+      for (const [date, day] of dates) if (day.closing <= now && !day.complete) incomplete.add(date);
+    }
 
     function runBar(st, i) {
       for (const [sub, subSec, ranges] of layers) {
@@ -268,10 +292,11 @@
 
       if (st !== null && (st.status === "open" || (st.status === "pending" && strat.keep_pending))) continue;
       if (s.t[i] < fromTime) continue;
+      if (incomplete.has(s.date[i])) continue;
       if (siteDay && !ownHours) {
         if (s.weekday[i] > 4 || !(FX.DAY_FIRST_HOUR <= s.hour[i] && s.hour[i] <= FX.DAY_LAST_SETUP_HOUR)) continue;
       }
-      if (strat.max_per_day && lastDay === s.date[i]) continue;
+      if (maxPerDay && lastDay === s.date[i]) continue;
       const found = strat.fn(s, i);
       if (!found) continue;
       const fresh = newPending(i, found);
@@ -282,6 +307,7 @@
       if (st.status === "pending" && st.valid_until <= now) Object.assign(st, { status: "cancelled", reason: "expired", exit_time: st.valid_until });
       out.push(st);
     }
+    if (strat.require_session_close && tfc.style === "day") out.omitted_days = incomplete.size;
     return out;
   }
 

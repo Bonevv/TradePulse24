@@ -1,8 +1,8 @@
-# През HTTP се изпълняват само обновяването и административният запис.
+# През HTTP се изпълняват обновяването, административният запис и Пулс.
 # Това спира и останали стари PHP файлове след обновяване на хостинга.
 <FilesMatch "\.php$">
   Require all denied
 </FilesMatch>
-<FilesMatch "^(cron|save)\.php$">
+<FilesMatch "^(cron|save|puls)\.php$">
   Require all granted
 </FilesMatch>

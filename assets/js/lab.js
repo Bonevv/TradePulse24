@@ -7,7 +7,7 @@ const LAB = {
   worker: null, loaded: false, loading: null, loadError: "",
   running: false, progress: null, log: [],
   selected: new Set(), results: {}, published: new Set(), inited: false, dirty: false,
-  custom: [], history: [],
+  custom: [], history: [], pulsChecking: false, pulsCheck: null,
   filter: "all", query: "", form: null, saving: false,
 };
 const GROUP_FILTERS = [["all", "Всички"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
@@ -85,7 +85,8 @@ function labLogin() {
 function labRowStats(e) {
   if (!e) return `<td colspan="6" class="muted">За тест</td>`;
   const s = e.stats;
-  const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${fmtR(e.validation.holdout.avg_r || 0)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}</small>` : "";
+  const omitted = Object.values(e.data_quality?.omitted_days || {}).reduce((sum, n) => sum + n, 0);
+  const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${fmtR(e.validation.holdout.avg_r || 0)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}${e.validation.note ? `<br>${esc(e.validation.note)}` : ""}${omitted ? `<br>Пропуснати непълни сесии по инструменти: ${omitted}.` : ""}</small>` : "";
   if (!s.trades) return `<td>${verdictBadge(s)}</td><td colspan="5" class="muted">няма сделки</td>`;
   return `<td>${verdictBadge(s)}${validation}</td><td class="num">${s.trades}</td><td class="num ${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</td>
     <td class="num">${s.profit_factor ?? "∞"}</td><td class="num">${fmtR(s.avg_first)} / ${fmtR(s.avg_second)}</td>
@@ -126,6 +127,7 @@ function labMain(mine = false) {
     <div class="page-heading"><div><p class="kicker">САМО ЗА АДМИНИСТРАТОР</p><h1>${S.route.view === "workshop" ? "Мои стратегии" : "Лаборатория"}</h1>
       <p>${mine ? "Запази идея, провери правилата и я тествай. Черновите и резултатите им остават тук, докато изрично не ги публикуваш." : "Тествай дневните или суинг вариантите. Новите идеи първо минават през исторически тест и отделен период за проверка."}</p></div>
       <div class="chips-row"><a class="btn btn-outline" href="${labBase()}/new">+ Нова стратегия</a></div></div>
+    ${pulsLabPanel()}
     <div class="grid-2 even">
       <section class="panel"><p class="kicker">1. ИСТОРИЯ</p><h3 style="margin-bottom:8px">Цени за теста</h3>${loadBox}</section>
       <section class="panel"><p class="kicker">2. ТЕСТ И ПУБЛИКУВАНЕ</p><h3 style="margin-bottom:8px">${tested} тествани · ${good} „Силна“ · ${LAB.published.size} публикувани</h3>
@@ -151,7 +153,7 @@ function labMain(mine = false) {
         const canCopy = !!v.strat.spec;
         return `<tr class="${LAB.selected.has(v.id) ? "sel" : ""}">
           <td><input type="checkbox" data-lab-sel="${esc(v.id)}" ${LAB.selected.has(v.id) ? "checked" : ""} aria-label="Избери ${esc(v.strat.name)} ${esc(v.tf)}"></td>
-          <td><strong>${esc(v.strat.name)}</strong>${v.strat.spec?.version ? ` <small>версия ${v.strat.spec.version}</small>` : ""} <span class="tag tag-${esc(v.strat.origin)}">${esc(v.strat.group)}</span>${v.strat.approx ? ' <span class="tag tag-approx">приблиз.</span>' : ""}<br><small class="muted">${esc(v.strat.source || "")}${v.strat.pairs ? ` · ${v.strat.pairs.join(", ")}` : ""}</small></td>
+          <td><strong>${esc(v.strat.name)}</strong>${v.strat.version || v.strat.spec?.version ? ` <small>версия ${v.strat.version || v.strat.spec.version}</small>` : ""} <span class="tag tag-${esc(v.strat.origin)}">${esc(v.strat.group)}</span>${v.strat.approx ? ' <span class="tag tag-approx">адаптация</span>' : ""}<br><small class="muted">${esc(v.strat.source || "")}${v.strat.pairs ? ` · ${v.strat.pairs.join(", ")}` : ""}</small>${v.strat.rules?.length ? `<details class="lab-rules"><summary>Правила и изход</summary><ul>${v.strat.rules.concat(v.strat.exit_rules || []).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>${v.strat.note ? `<p class="what">${esc(v.strat.note)}</p>` : ""}</details>` : ""}</td>
           <td>${esc(FX.TIMEFRAMES[v.tf].label)}</td>${labRowStats(e)}
           <td><label class="switch"><input type="checkbox" data-lab-pub="${esc(v.id)}" ${LAB.published.has(v.id) ? "checked" : ""} ${e ? "" : "disabled"}><span>${LAB.published.has(v.id) ? "да" : "не"}</span></label></td>
           <td>${canCopy ? `<button class="tiny-btn" data-lab-copy="${esc(v.key)}" title="Направи копие и промени правилата">Копие</button>` : ""}${v.strat.origin === "custom" ? ` <a class="tiny-btn" href="${labBase()}/edit/${esc(v.key)}">Промени</a>` : ""}</td></tr>`;

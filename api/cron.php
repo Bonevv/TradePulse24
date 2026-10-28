@@ -164,5 +164,17 @@ $meta['refresh_minutes'] = (int) (cfg()['refresh_minutes'] ?? 20);
 $meta['source_prices'] = 'Twelve Data';
 $meta['source_news'] = 'ForexFactory – икономически календар за седмицата';
 write_json(DATA_DIR . '/meta.json', $meta);
+// Общият обзор се подготвя най-много три пъти дневно при променени данни.
+// Провал на помощника не спира цените и календара.
+if (!empty(cfg()['groq_key'])) {
+    require_once __DIR__ . '/puls-lib.php';
+    try {
+        $calendar = read_json(DATA_DIR . '/news.json', ['events' => [], 'updated' => 0]);
+        $cache = private_dir() . '/puls-cache.json';
+        $status = puls_status(cfg(), $calendar, $meta, $cache, $now);
+        if ($status['needs_refresh']) { puls_run('overview', [], cfg(), $calendar, $meta, $cache, $now, 'cron'); say('Пулс: дневният обзор е подготвен'); }
+    } catch (PulsProblem $e) { say('Пулс: ' . $e->reason); }
+    catch (Throwable $e) { say('Пулс: обзорът не е подготвен; провери PHP настройките'); }
+}
 say('Готово' . ($errors ? ' (с ' . count($errors) . ' грешки)' : ''));
 flock($lock, LOCK_UN);

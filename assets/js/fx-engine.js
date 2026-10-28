@@ -41,7 +41,7 @@
 
     /** Всички сделки на една стратегия в една графика (за всички нейни инструменти). */
     trades(strat, tf, pairs) {
-      const out = [], starts = [], ends = [];
+      const out = [], starts = [], ends = [], omitted = {};
       for (const pair of pairs || strat.pairs || FX.PAIR_KEYS) {
         const s = this.get(pair, tf);
         if (!s) continue;
@@ -49,14 +49,16 @@
         ends.push(s.t[s.n - 1] + s.sec);
         s.memo = {};
         const subs = [[this.get(pair, "M15"), 900], [this.get(pair, "H1"), 3600]];
-        for (const tr of FX.bt.simulate(s, strat, this.now, subs)) {
+        const simulated = FX.bt.simulate(s, strat, this.now, subs);
+        if (simulated.omitted_days !== undefined) omitted[pair] = simulated.omitted_days;
+        for (const tr of simulated) {
           this.catchUp(tr, s, strat);
           tr.strategy = `${strat.key}-${tf}`;
           tr.live = this.isLive(tr);
           out.push(FX.bt.clean(tr));
         }
       }
-      return { trades: out, start: starts.length ? Math.min(...starts) : 0, end: ends.length ? Math.max(...ends) : 0 };
+      return { trades: out, start: starts.length ? Math.min(...starts) : 0, end: ends.length ? Math.max(...ends) : 0, ...(Object.keys(omitted).length ? { data_quality: { omitted_days: omitted } } : {}) };
     }
 
     isLive(tr) {
@@ -91,6 +93,7 @@
     entry(strat, tf, res) {
       const { trades, start, end } = res;
       const stats = FX.bt.summarize(trades, start, end);
+      if (strat.provisional && stats.verdict === "good") { stats.verdict = "weak"; stats.verdict_label = "Слаба"; }
       const perPair = [];
       for (const pair of FX.PAIR_KEYS) {
         const rs = trades.filter((t) => t.pair === pair && t.status === "closed").map((t) => t.r);
@@ -109,6 +112,8 @@
         id: `${strat.key}-${tf}`, key: strat.key, tf, tf_label: tfc.label, style: strat.style || tfc.style,
         name: strat.name, short: strat.short, rules: strat.rules, source: strat.source, origin: strat.origin,
         approx: !!strat.approx, url: strat.url || null, note: strat.note || null, exit_rules: strat.exit_rules || null,
+        ...(strat.version ? { version: strat.version, provisional: !!strat.provisional } : {}),
+        ...(res.data_quality ? { data_quality: res.data_quality } : {}),
         session: strat.session, group: strat.group || "", pairs: strat.pairs || FX.PAIR_KEYS,
         stats, per_pair: perPair, recent,
         live: { trades: liveRs.length, win_rate: liveRs.length ? FX.round((liveRs.filter((r) => r > 0.02).length / liveRs.length) * 100, 1) : null, total_r: FX.round(liveRs.reduce((a, b) => a + b, 0), 2), since: this.launch },

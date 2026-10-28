@@ -90,5 +90,8 @@ function fixture(key, dir, entry, stop, targets, options = {}) {
   assert.ok(!JSON.stringify(openSteps).includes("Затвори половината"), "no invented half-close on trail follower");
   const plan = evaluate("planText(bb)");
   assert.ok(plan.includes("Ориентири: +1R") && plan.includes("НЕ са допълнителни Take Profit"));
+  sb.delayed = { ...fixed, orders: fixed.orders.map((o) => ({ ...o, activate_after: Date.now() / 1000 + 1800 })) };
+  assert.ok(evaluate("planText(delayed)").includes("Активиране от"));
+  assert.ok(JSON.stringify(evaluate("stepsFor(delayed)")).includes("Изчакай активирането"));
   console.log("OK: buy/sell R levels, conditional targets, live rule, stop changes, copy plan, invalid stops");
 })().catch((e) => { console.error(e); process.exitCode = 1; });
