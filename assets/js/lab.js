@@ -79,7 +79,7 @@ function labLogin() {
       <div class="form-field"><label for="lab-pass">Парола</label><input id="lab-pass" type="password" autocomplete="current-password" required value="${esc(LAB.password)}"></div>
       ${LAB.authError ? `<div class="risk-notice">${esc(LAB.authError)}</div>` : ""}
       <button class="btn btn-primary" type="submit" ${LAB.checking ? "disabled" : ""}>${LAB.checking ? "Проверявам…" : "Влез"}</button>
-      <p class="what">Паролата е в api/config.php (admin_password).</p></form></section>`;
+      </form></section>`;
 }
 
 function labRowStats(e) {

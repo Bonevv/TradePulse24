@@ -727,50 +727,27 @@ function profileStrip() {
 }
 
 function viewDashboard() {
-  const d = S.data;
-  const current = mySignals().filter(isCurrent);
-  const pending = current.filter((s) => s.status === "pending").length;
-  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-  const highToday = newsFor(MY_CURRENCIES, now(), todayEnd.getTime() / 1000, ["high"]).length;
-  const upcoming = newsFor(MY_CURRENCIES, now() - 30 * 60, now() + 48 * 3600, ["high"]).slice(0, 6);
-  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => ["good", "tested", "weak"].includes(bestVerdict(s))).slice(0, 3);
-  const bestLine = (e) => {
-    const p = bestPairRow(e), x = p || e.stats;
-    return `${p ? `${esc(p.name)}: ` : ""}${F.num(0).format(x.win_rate || 0)}% печеливши · средно ${fmtR(x.avg_r || 0)} на сделка · ${x.trades} сделки`;
-  };
-  const followedCount = followedInStyle().length;
-  let sigBody;
-  if (!followedCount) sigBody = emptyBox("◈", "Не следваш нито една стратегия", "Избери поне една стратегия и тук ще виждаш нейните сигнали.", `<a class="btn btn-primary" href="#/strategies">Към стратегиите ↗</a>`);
-  else if (!current.length) sigBody = emptyBox("⌁", "В момента няма сигнали", `Стратегиите, които следваш, нямат сигнал точно сега. Цените се проверяват на всеки ${d.settings?.refresh_minutes || 10} минути и новите сигнали се появяват тук.`, `<a class="btn btn-outline" href="#/signals">Виж последните приключили ↗</a>`);
-  else {
-    // Както в „Сигнали“: няколко сходни сигнала за една двойка са един ред, който се разгъва. Лимитът е 6 групи.
-    const more = FX.signalTools.group(current).length - 6;
-    sigBody = `<div class="sig-list">${signalGroups(current, 6)}</div>${more > 0 ? `<p class="muted-small" style="margin-top:10px"><a class="text-link" href="#/signals">Още ${more} ${more === 1 ? "група" : "групи"} в „Сигнали“ <span>↗</span></a></p>` : ""}`;
-  }
-  return `
-    ${S.settings.balance ? profileStrip() : onboardingCard()}
-    <div class="metrics-grid">
-      <div class="metric-card"><div class="metric-top">Сигнали сега <span class="metric-icon">⌁</span></div><div class="metric-value">${current.length} <span class="metric-sub">${pending} чакат вход</span></div><div class="metric-foot">от стратегиите, които следваш</div></div>
-      <div class="metric-card"><div class="metric-top">Силни новини днес <span class="metric-icon">◷</span></div><div class="metric-value">${highToday}</div><div class="metric-foot">за USD, EUR, GBP, JPY, AUD, CHF, CAD, NZD</div></div>
-      <div class="metric-card"><div class="metric-top">Пазарът <span class="metric-icon">◎</span></div><div class="metric-value status-text" style="color:${d.market?.open ? "var(--accent)" : "var(--amber)"}">${d.market?.open ? "Отворен" : "Затворен"}</div><div class="metric-foot">${d.market?.open ? "Форекс работи 24 ч от понеделник до петък" : "Отваря в неделя вечер (около 23:00–00:00)"}</div></div>
-      <div class="metric-card"><div class="metric-top">Цените <span class="metric-icon">↻</span></div><div class="metric-value" style="font-size:20px">${d.prices_updated ? rel(d.prices_updated) : "—"}</div><div class="metric-foot">обновяват се на всеки ${d.settings?.refresh_minutes || 10} мин</div></div>
-    </div>
-    <div class="grid-2" style="margin-top:14px">
-      <section class="panel"><div class="panel-head"><div><p class="kicker">СИГНАЛИ СЕГА</p><h3>Налични сигнали</h3></div><a class="text-link" href="#/signals">Всички <span>↗</span></a></div>${sigBody}</section>
-      <div class="stack">
-        <section class="panel"><div class="panel-head"><div><p class="kicker">ЦЕНИ</p><h3>Валутни двойки</h3></div><span class="muted-small">промяна за деня</span></div>${pricesList()}</section>
-        <section class="panel"><div class="panel-head"><div><p class="kicker">НОВИНИ · СЛЕДВАЩИТЕ 48 Ч</p><h3>Силни новини</h3></div><a class="text-link" href="#/news">Календар <span>↗</span></a></div>
-          ${upcoming.length ? upcoming.map(newsCompact).join("") : `<p class="muted" style="font-size:12px">Няма силни новини в следващите 48 часа.</p>`}</section>
-        <section class="panel"><div class="panel-head"><div><p class="kicker">НАЙ-ДОБРИ В ТЕСТА</p><h3>Стратегии</h3></div><a class="text-link" href="#/strategies">Всички <span>↗</span></a></div>
-          ${best.length ? best.map((e) => `<a class="news-compact" style="color:inherit;text-decoration:none" href="#/strategy/${esc(e.id)}"><span class="when">${headlineBadge(e)}</span><span><strong>${esc(e.name)} · ${esc(e.tf_label)}</strong><small>${bestLine(e)}</small></span></a>`).join("") : `<p class="muted" style="font-size:12px">Нито една стратегия не минава теста в момента.</p>`}</section>
-      </div>
-    </div>`;
+  const d = S.data, current = mySignals().filter(isCurrent), groups = FX.signalTools.group(current);
+  const pending = current.filter((sig) => sig.status === "pending").length;
+  const upcoming = newsFor(MY_CURRENCIES, now(), now() + 48 * 3600, ["high"]).slice(0, 5);
+  const best = sortedStrategies().filter((entry) => styleOk(entry.style) && !entry.retired && ["good", "tested", "weak"].includes(bestVerdict(entry))).slice(0, 3);
+  const stats = RiskJournal.stats(journalTrades()), plan = JOURNAL.plan;
+  const status = `<div class="dashboard-status"><span><i class="status-dot ${d.market?.open ? "" : "off"}"></i>${d.market?.open ? "Пазарът е отворен" : "Пазарът е затворен"}</span><span>Цени: <strong>${d.prices_updated ? esc(rel(d.prices_updated)) : "няма текущи"}</strong></span><span><strong>${current.length}</strong> сигнала за ${groups.length} инструмента · ${pending} чакат вход</span>${upcoming[0] ? `<a href="#/news">Следваща важна новина: ${esc(upcoming[0].currency)} · ${esc(when(upcoming[0].time))}</a>` : ""}</div>`;
+  const signalBody = current.length ? `<div class="sig-list">${signalGroups(current)}</div>` : emptyBox("⌁", "Няма текущи сигнали", noSignalsReason(), `<a class="btn btn-outline" href="#/strategies">Избери стратегии</a>`);
+  const risk = `<section class="panel"><div class="panel-head"><div><p class="kicker">ОТ ЛИЧНИЯ ДНЕВНИК</p><h3>Отчетен риск</h3></div><a class="text-link" href="#/risk">Дневник ↗</a></div><div class="dashboard-risk"><div><span>Отворен</span><strong class="${stats.openRisk >= plan.open ? "neg" : ""}">${F.num(2).format(stats.openRisk)}%</strong><small>лимит ${plan.open}% · ${stats.open.length} позиции</small></div><div><span>Дневен бюджет за загуби</span><strong>${F.num(2).format(Math.max(0, plan.daily - stats.daily))}%</strong><small>остава от ${plan.daily}%</small></div></div>${portfolioRiskNotice()}<p class="what">Сметката включва само въведените сделки. Баланс ${S.settings.balance ? money(S.settings.balance, 0) : "не е въведен"} · риск на сделка ${S.settings.risk}%.</p><a class="text-link" href="#/settings">Баланс и настройки ↗</a></section>`;
+  const news = `<section class="panel"><div class="panel-head"><div><p class="kicker">СЛЕДВАЩИТЕ 48 ЧАСА</p><h3>Важни новини</h3></div><a class="text-link" href="#/news">Календар ↗</a></div>${upcoming.length ? upcoming.map(newsCompact).join("") : '<p class="what">Няма предстоящи новини с висока важност в наличния календар.</p>'}</section>`;
+  const tests = `<section class="panel"><div class="panel-head"><div><p class="kicker">ИСТОРИЧЕСКИ РЕЗУЛТАТИ</p><h3>От избрания режим</h3></div><a class="text-link" href="#/strategies">Стратегии ↗</a></div><div class="dashboard-strategies">${best.map((entry) => {
+    const pair = bestPairRow(entry), row = pair || entry.stats;
+    return `<a href="#/strategy/${esc(entry.id)}"><strong>${esc(entry.name)} · ${entry.tf}</strong>${headlineBadge(entry)}<small>${pair ? esc(pair.name) + " · " : ""}${row.trades} сделки · средно ${fmtR(row.avg_r || 0)}</small></a>`;
+  }).join("") || '<p class="what">Няма оценени варианти за този режим.</p>'}</div></section>`;
+  const onboarding = S.settings.balance ? "" : movablePanel("account", "Баланс и риск", `<section class="panel"><details class="account-setup"><summary>Въведи баланс, за да смятаме обема</summary>${onboardingCard()}</details></section>`);
+  return `<div class="page-heading dashboard-heading"><div><p class="kicker">ПАЗАРЕН ПРЕГЛЕД</p><h1>Графика и сигнали</h1></div><a class="btn btn-outline btn-sm" href="#/risk">Риск и дневник</a></div>${status}<div class="workspace-grid" data-panel-board="home">${movablePanel("chart", "Графика", modelChartPanel("home"))}${movablePanel("signals", "Сигнали по инструменти", `<section class="panel"><div class="panel-head"><div><p class="kicker">${esc(STYLE_NAMES[S.settings.style].toUpperCase())}</p><h3>Сигнали по инструменти</h3></div><a class="text-link" href="#/signals">Всички ↗</a></div>${signalBody}</section>`, "wide")}${movablePanel("risk", "Отчетен риск", risk, "narrow")}${movablePanel("news", "Важни новини", news, "half")}${movablePanel("strategies", "Стратегии от теста", tests, "half")}${onboarding}</div>`;
 }
 
 function pricesList() {
   const pairs = S.data?.pairs || {};
-  return Object.entries(pairs).map(([k, p]) => `<div class="price-row"><span><strong>${esc(p.name)}</strong><small class="quote-time">${p.price_time ? `${quoteFresh(k) ? "Последна" : "Стара котировка"}: ${esc(when(p.price_time))}` : "Няма текуща котировка"}</small></span><span>${px(k, p.price)}</span>
-    <span class="chg ${p.change_pct > 0 ? "pos" : p.change_pct < 0 ? "neg" : ""}">${p.change_pct == null ? "—" : pct(p.change_pct, 2)}</span></div>`).join("");
+  return Object.entries(pairs).map(([k, p]) => `<a class="price-row" href="#/pair/${esc(k)}" title="Графика и стратегии за ${esc(p.name)}"><span><strong>${esc(p.name)}</strong><small class="quote-time">${p.price_time ? `${quoteFresh(k) ? "Последна" : "Стара котировка"}: ${esc(when(p.price_time))}` : "Няма текуща котировка"}</small></span><span>${px(k, p.price)}</span>
+    <span class="chg ${p.change_pct > 0 ? "pos" : p.change_pct < 0 ? "neg" : ""}">${p.change_pct == null ? "—" : pct(p.change_pct, 2)}</span></a>`).join("");
 }
 
 function newsCompact(e) {
@@ -943,6 +920,7 @@ function viewSignal(id) {
     <div class="panel signal-personal"><h3>Твоята сделка</h3><p class="what">Ако си влязъл при брокера, добави реалния вход и обем в личния дневник.</p><div class="chips-row">${ordersOf(sig).map((order) => `<button type="button" class="btn btn-outline" data-journal-signal="${esc(sig.id)}" data-journal-dir="${order.dir}">Запиши ${order.dir === 1 ? "покупка" : "продажба"}</button>`).join("")}</div></div>
     ${signalAvailability(sig)}${conflictNotice(sig.pair)}
     <div class="status-box ${boxCls}"><strong>${esc(st.label)}.</strong> ${esc(st.text)}</div>
+    ${modelChartPanel("signal:" + sig.id, sig.pair, sig)}
     ${entryNowPanel(sig)}
     <div class="detail-grid"><div class="detail-column">
       <section class="panel trade-plan-panel"><div class="panel-head"><div><p class="kicker">НИВА</p><h3>${orders.length > 1 ? "Две възможни посоки" : "Вход, стоп и цели"}</h3></div><span class="pill pill-neutral">${esc(sig.tf_label)}</span></div>
@@ -955,9 +933,6 @@ function viewSignal(id) {
         ${landmarkNote(sig.pair, o, sig)}` ).join("")}
         <p class="what"><strong>Истински изход:</strong> ${ownExit(strat) ? esc((strat?.exit_rules || []).join(" ") || "По правило на стратегията. Проверявай условията за изход.") : "При 1R се затваря половината, стопът на остатъка отива на входа; при 2R се затваря останалото."}</p>
       </section>
-      <section class="panel"><div class="panel-head"><div><p class="kicker">ГРАФИКА · ${esc(sig.tf_label.toUpperCase())}</p><h3>Цената и нивата</h3></div><span class="muted-small">текуща цена ${px(sig.pair, pairInfo(sig.pair).price)}</span></div>
-        <div class="chart-box" id="sig-chart"><p class="muted">Зареждам графиката…</p></div>
-        <div class="chart-legend"><span><i style="background:#e8eef0"></i>Вход</span><span><i style="background:#fc928e"></i>Стоп</span><span><i style="background:#9fe4ac"></i>Реални TP</span><span><i style="background:#7590a2"></i>1R / 2R ориентири</span><span><i style="background:#f6cd8e"></i>Свещта на сигнала</span></div></section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">ЗАЩО</p><h3>Защо има сигнал</h3></div></div>
         <p class="why-text">${esc(sig.why)}</p>
         ${strat ? `<p class="what">Правилата на стратегията и как се е представила в теста: <a class="link" href="#/strategy/${esc(strat.id)}">${esc(strat.name)} →</a></p>` : ""}</section>
@@ -1192,6 +1167,17 @@ function viewHelp() {
             <li>Началният разход е моделен. Комисиона, приплъзване и суап могат да се зададат в Лабораторията; резултатът пази използваните стойности.</li>
             <li>Това не е инвестиционен съвет. Ти решаваш дали и как да търгуваш.</li>
           </ul></section>
+        <section class="panel" id="chart-help"><p class="kicker">ГРАФИКАТА С МОДЕЛА</p><h3 style="margin-bottom:8px">Как да я четеш</h3>
+          <ul class="rules">
+            <li>На началната страница избираш инструмент и стратегия. Дневните модели работят на M15/H1, а суинг моделите — на H4/D1. „Преглед“ сменя графиката между четирите периода, без да променя сигнала и нивата му.</li>
+            <li>Графиката е една и съща в началото, в инструмента и в сигнала. Панелите се местят от „Мести“ с мишката или със стрелките на телефон; редът се пази в този браузър.</li>
+            <li>Свещите и индикаторите са същите, по които сайтът смята сигналите. Показват се само индикаторите, които стратегията ползва.</li>
+            <li>● е свещта на сигнала, ▲▼ е достигнатият вход по модела, ■ е изходът. Линиите са вход, начален и текущ стоп и действителните цели (TP). +1R и +2R са само ориентири.</li>
+            <li>Без текущ сигнал на графиката няма входни нива. При две противоположни чакащи поръчки се виждат и двете.</li>
+            <li>Всичко на графиката е изчислен модел. Реалната ти сделка (от дневника или потвърдена в „Следени“) е в лилаво.</li>
+            <li>Графиката не тегли нови цени: показва запазените данни, които cron.php обновява. Часовете са по ${esc(TZ)}.</li>
+            <li>Рисува се с TradingView Lightweight Charts™ (Apache License 2.0). Copyright (с) 2025 TradingView, Inc. · <a class="link" href="https://www.tradingview.com/" target="_blank" rel="noopener">tradingview.com</a></li>
+          </ul></section>
       </div>
     </div>
     ${orderGuide()}`;
@@ -1199,7 +1185,7 @@ function viewHelp() {
 
 /* ------------------------------------------------------------ рамка, маршрути */
 
-const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", journal: "Журнал на сигналите", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Попитай Пулс", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
+const TITLES = { dashboard: "Начало", pair: "Инструмент", signals: "Сигнали", watch: "Следени сигнали", journal: "Журнал на сигналите", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Попитай Пулс", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
 
 function parseRoute() {
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/");
@@ -1212,7 +1198,7 @@ function renderChrome() {
   const d = S.data;
   const route = S.route.view;
   document.querySelectorAll("[data-trading-style]").forEach((el) => { el.classList.toggle("active", el.dataset.tradingStyle === S.settings.style); el.setAttribute("aria-pressed", String(el.dataset.tradingStyle === S.settings.style)); });
-  const navRoute = route === "analysis" ? "news" : route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route;
+  const navRoute = route === "analysis" ? "news" : route === "signal" ? (S.watch.has(S.route.id) ? "watch" : "signals") : route === "strategy" ? "strategies" : route === "pair" ? "dashboard" : route;
   document.querySelectorAll("[data-route]").forEach((el) => {
     const on = el.dataset.route === navRoute;
     el.classList.toggle("active", on);
@@ -1244,6 +1230,9 @@ function renderChrome() {
 
 function render() {
   const main = document.getElementById("main");
+  // Коренът остава между страниците, за разлика от панелите в него.
+  main.removeAttribute("data-panel-board");
+  main.removeAttribute("data-layout-storage");
   const d = S.data;
   S.route = parseRoute();
   renderChrome();
@@ -1251,25 +1240,25 @@ function render() {
   if (!d?.ready && view !== "lab") { main.innerHTML = viewLoading(); return; }
   recordObservedSignals();
   const views = {
-    dashboard: viewDashboard, signals: viewSignals, watch: viewWatch, signal: () => viewSignal(id), strategies: viewStrategies,
+    dashboard: viewDashboard, pair: () => viewPair(id), signals: viewSignals, watch: viewWatch, signal: () => viewSignal(id), strategies: viewStrategies,
     journal: viewObserved, strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, analysis: () => viewNewsAnalysis(id), workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
   };
   main.innerHTML = views[view]();
+  PanelLayout.mount(main, view);
   drawCharts();
   if (view === "news") pulsLoadOverview();
 }
 
 function drawCharts() {
   const { view, id } = S.route;
-  if (view === "signal") {
-    const sig = resolveSignal(id);
-    if (sig) loadChart(sig);
-  }
+  mountModelChart();
   if (view === "strategy") {
     const e = stratById(id);
     if (e) drawEquity(e);
   }
 }
+
+document.addEventListener("panels:moved", () => requestAnimationFrame(drawCharts));
 
 let resizeTimer;
 window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawCharts, 200); });

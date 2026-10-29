@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const store = new Map(), elements = new Map();
 const element = (id) => {
-  if (!elements.has(id)) elements.set(id, { innerHTML: "", textContent: "", hidden: false, classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, contains() { return false; } });
+  if (!elements.has(id)) elements.set(id, { innerHTML: "", textContent: "", hidden: false, classList: { toggle() {}, add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, contains() { return false; }, querySelector: () => null, querySelectorAll: () => [], children: [] });
   return elements.get(id);
 };
 const context = { console, Date, Math, Intl, Map, Set, JSON, Number, Array, Object, String, Boolean, URL,

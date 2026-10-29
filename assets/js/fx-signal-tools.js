@@ -5,10 +5,12 @@
   function group(signals) {
     const groups = new Map();
     for (const signal of signals) {
-      const side = directions(signal).slice().sort().join(","), state = signal.status === "pending" ? "pending" : signal.status === "open" ? "open" : signal.status;
-      const key = [signal.pair, signal.style, side, state].join("|");
-      if (!groups.has(key)) groups.set(key, { key, pair: signal.pair, style: signal.style, directions: directions(signal), state, signals: [] });
-      groups.get(key).signals.push(signal);
+      const key = [signal.pair, signal.style].join("|");
+      if (!groups.has(key)) groups.set(key, { key, pair: signal.pair, style: signal.style, directions: [], state: signal.status, signals: [] });
+      const group = groups.get(key);
+      group.signals.push(signal);
+      group.directions = [...new Set([...group.directions, ...directions(signal)])];
+      if (group.state !== signal.status) group.state = "mixed";
     }
     return [...groups.values()];
   }

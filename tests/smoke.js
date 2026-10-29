@@ -9,7 +9,7 @@ const localStorage = { getItem: (k) => local.get(k) || null, setItem: (k, v) => 
 const elems = new Map();
 function el(id) {
   if (!elems.has(id)) elems.set(id, { innerHTML: "", textContent: "", hidden: false, value: "", clientWidth: 700,
-    contains: () => false, classList: { add() {}, remove() {}, toggle() {} }, focus() {}, setAttribute() {}, removeAttribute() {} });
+    contains: () => false, querySelector: () => null, querySelectorAll: () => [], children: [], classList: { add() {}, remove() {}, toggle() {} }, focus() {}, setAttribute() {}, removeAttribute() {} });
   return elems.get(id);
 }
 const ctx = {

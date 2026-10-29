@@ -22,7 +22,8 @@
   };
   window.TP24_BOOT = state;
   window.addEventListener("error", (event) => {
-    if (event.target?.tagName === "SCRIPT") state.fail("script_missing", event.target.src);
+    // Библиотеката за графиката е по избор: без нея сайтът работи с опростена графика.
+    if (event.target?.tagName === "SCRIPT") { if (!event.target.hasAttribute("data-optional")) state.fail("script_missing", event.target.src); }
     else if (event.error) state.fail("javascript_error", event.filename, event.lineno, event.error.name);
   }, true);
   window.addEventListener("unhandledrejection", (event) => state.fail("startup_failed", "app.js", 0, event.reason?.name));

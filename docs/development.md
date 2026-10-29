@@ -34,6 +34,8 @@ node tests/observation-risk-costs.js
 php tests/maintenance.php
 php tests/login.php
 node tests/entry.js
+node tests/chart.js
+node tests/chart-context.js
 php tests/prices.php
 python tests/release.py
 ```
@@ -54,6 +56,7 @@ node tests/candidates.js
 
 ```sh
 python tests/browser.py
+python tests/workspace.py
 ```
 
 Тестът създава временно копие на сайта и отделен Apache на порт 8081. Не копира локалните конфигурации. Проверява входа, черновите, истинския Web Worker, версии, публикуване, дневника, въпросите и последващия разговор, избор на посока, общия дневен обзор, безопасното показване на отговорите, защитата на PHP файловете и мобилния изглед. След края почиства своя процес и временните файлове.
@@ -79,6 +82,8 @@ python tests/browser.py
 - `fx-observed.js`, `observed-ui.js` — журнал на наблюдаваните в браузъра сигнали.
 - `fx-signal-tools.js`, `notifications.js` — групиране, състояние на входа и известия при отворен сайт.
 - `fx-entry.js`, `entry-ui.js` — вход след сигнала, видове поръчки, бланка за поръчката и измерване по историята.
+- `fx-chart.js`, `chart-ui.js` — графиката с модела и страницата на инструмента; `assets/vendor/lightweight-charts/` — TradingView Lightweight Charts™ 5.2.1 без промени, с лиценза и NOTICE.
+- `panel-layout.js`, `assets/workspace.css` — местене, запазване на реда и мобилна подредба. Връщането на подредбата не изчиства чужди ключове в localStorage.
 - `api/maintenance.php`, `maintenance-ui.js` — сървърни копия, възстановяване и проверка на файловете.
 - `fx-builder.js`, `lab.js`, `fx-worker.js` — конструктор и тестове.
 - `api/workspace.php`, `api/save.php` — чернови, версии и публикуване.
@@ -103,3 +108,17 @@ location ~ ^/data/.*\.(php|phtml|phar|lock|tmp[0-9]*)$ { deny all; }
 ```
 
 Провери реда спрямо останалите location правила. Папката `data/` трябва да е достъпна за запис от PHP, но да не допуска изпълнение на качени скриптове.
+
+
+## Пакет за обновяване
+
+След проверките и обновяване на `release.json`:
+
+```sh
+python tests/package.py --output /tmp/TradePulse24-4.9-update.zip
+python tests/update.py /tmp/TradePulse24-4.9-update.zip
+```
+
+Пакетът включва runtime файловете от списъка на версията и документацията. Тестът за обновяване пази примерни конфигурации, всички 24 ценови файла, работните резултати и частните копия. ZIP и SHA-256 файлът се публикуват отделно от основния клон с кода.
+
+`workspace.py` проверява реално местене с мишка, клавиатура и бутони, ред след презареждане, четирите периода на преглед, неизменни сигнални нива, историята от локални JSON и размери от 320 до 1440 пиксела. `chart-context.js` покрива времето на маркерите при друг период и модела с вход преди изтекъл срок при стари данни.

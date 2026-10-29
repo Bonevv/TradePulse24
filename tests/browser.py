@@ -77,6 +77,13 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
                 assert len(page.locator("#main").inner_text()) > 30, route
                 assert not errors, (route, errors)
             assert page.locator("[data-trading-style]").count() == 2
+            # Графиката с модела: на началната страница и на страницата на инструмента, с атрибуцията на TradingView.
+            for route in ["", "pair/EURUSD"]:
+                page.goto(base + "/#/" + route, wait_until="networkidle")
+                page.wait_for_function("S.data?.ready")
+                assert page.locator("#mc-panel").count() == 1, route
+                assert "TradingView" in page.locator("#mc-panel").inner_text() or "cron.php" in page.locator("#mc-panel").inner_text(), route
+                assert not errors, (route, errors)
             page.goto(base + "/#/workshop", wait_until="networkidle")
             page.locator("#lab-pass").fill("local-browser-test-only")
             page.get_by_role("button", name="Влез", exact=True).click()
@@ -296,6 +303,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert page.evaluate('mySignals().map(s=>s.pair)') == ['USDJPY','XAUUSD']
             assert '1 текущи модела са скрити' in page.locator('#main').inner_text()
             # Без 30 сделки след теста историческата оценка остава „Силна в теста“.
+            page.locator('[data-signal-group="USDJPY"] > summary').click()
             assert 'Силна в теста за USD/JPY' in page.locator('#main').inner_text()
             page.evaluate("S.watch.add(S.data.signals[0]); render();")
             assert page.evaluate('mySignals().length') == 3, "Followed signal remains available after exclusion by instrument"
@@ -353,7 +361,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert request("/data/private/backups/anything.json")[0] == 403
             with urllib.request.urlopen(base + "/api/state.php") as response:
                 etag = response.headers["ETag"]
-                assert json.loads(response.read())["release"] == "4.7"
+                assert json.loads(response.read())["release"] == page.evaluate("FX.RELEASE")
             try:
                 urllib.request.urlopen(urllib.request.Request(base + "/api/state.php", headers={"If-None-Match": etag}))
                 raise AssertionError("Expected a conditional response")
@@ -423,7 +431,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
               location.hash='#/signals';render();
             }""")
             assert page.locator('.signal-group').count() == 1
-            assert "2 варианта" in page.locator('.signal-group summary').inner_text()
+            assert "2 сигнала" in page.locator('.signal-group summary').inner_text()
             assert "Посоките се разминават" in page.locator('#main').inner_text()
             page.locator('.signal-group summary').click()
             assert page.locator('.signal-group .sig-card').count() == 2

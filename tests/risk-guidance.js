@@ -8,7 +8,7 @@ const local = new Map();
 const elements = new Map();
 function element(id) {
   if (!elements.has(id)) elements.set(id, { innerHTML: "", textContent: "", hidden: false,
-    contains: () => false, classList: { add() {}, remove() {}, toggle() {} }, focus() {}, setAttribute() {}, removeAttribute() {} });
+    contains: () => false, querySelector: () => null, querySelectorAll: () => [], children: [], classList: { add() {}, remove() {}, toggle() {} }, focus() {}, setAttribute() {}, removeAttribute() {} });
   return elements.get(id);
 }
 const context = {

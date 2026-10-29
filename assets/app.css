@@ -458,3 +458,52 @@ table.data tr:last-child td { border-bottom: 0; }
 .order-guide summary { cursor:pointer; font-weight:750; }
 .order-guide ol.rules { padding-left:20px; }
 @media(max-width:700px) { .order-ticket dl { grid-template-columns:1fr; gap:2px; } .order-ticket dt { margin-top:6px; } }
+
+/* Графика с модела (TradingView Lightweight Charts) */
+.mc-panel { margin-top:14px; }
+a.price-row { color:inherit; text-decoration:none; border-radius:6px; }
+a.price-row:hover strong { color:var(--accent); }
+.mc-controls { display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
+.mc-pairs, .mc-tfs { display:flex; flex-wrap:wrap; gap:6px; }
+.mc-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.mc-tfs small { opacity:.7; margin-left:4px; font-weight:600; }
+.mc-selects { align-items:flex-end; }
+.mc-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); min-width:0; flex:1 1 260px; }
+.mc-field select { width:100%; min-width:0; background:#101922; color:var(--text); border:1px solid #36434e; border-radius:9px; padding:9px 10px; font-size:13px; }
+.mc-panel .warn-line { margin:0 0 10px; }
+.mc-body { display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:16px; align-items:start; }
+.mc-main, .mc-side { min-width:0; }
+.mc-chart { width:100%; height:400px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); }
+.mc-chart.mc-fallback { padding:8px; overflow:visible; }
+.mc-legend { display:flex; flex-wrap:wrap; gap:3px 12px; font-size:11px; color:#9eacb8; min-height:18px; margin-bottom:6px; font-variant-numeric:tabular-nums; }
+.mc-legend b { color:var(--text); font-weight:650; }
+.mc-inds { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.mc-ind { display:inline-flex; align-items:center; gap:6px; background:#18222d; color:#c2ccd5; border:1px solid #2a3643; border-radius:8px; padding:6px 10px; font-size:11px; font-weight:650; }
+.mc-ind i { width:12px; height:3px; border-radius:2px; display:inline-block; }
+.mc-ind[aria-pressed="false"] { color:#7d8b97; border-style:dashed; }
+.mc-ind[aria-pressed="false"] i { background:#4a5866 !important; }
+.mc-source { font-size:11px; color:#8494a0; margin-top:8px; line-height:1.6; }
+.mc-source strong { color:#c9d5da; }
+.mc-hint { font-size:10.5px; color:#6f808d; margin-top:6px; }
+.mc-attrib { font-size:10.5px; color:#6f808d; margin-top:6px; }
+.mc-attrib a { color:#9fb3c2; text-decoration:underline; }
+.mc-side { display:flex; flex-direction:column; gap:12px; }
+.mc-box { border:1px solid var(--border); background:#151f2a; border-radius:12px; padding:14px; }
+.mc-box h4 { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:15px; margin-bottom:6px; }
+.mc-box .entry-state { margin-top:10px; }
+.mc-facts { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0 0; }
+.mc-facts div { background:#111a23; border:1px solid #26313e; border-radius:8px; padding:8px; min-width:0; }
+.mc-facts dt { font-size:10px; color:var(--muted); }
+.mc-facts dd { margin:2px 0 0; font-weight:750; font-size:13px; overflow-wrap:anywhere; }
+.mc-levels { list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:2px; font-size:12px; }
+.mc-levels li { display:flex; justify-content:space-between; gap:8px; border-bottom:1px dashed #26313e; padding:4px 0; }
+.mc-levels span { min-width:0; overflow-wrap:anywhere; }
+.mc-levels i { width:10px; height:3px; display:inline-block; margin-right:6px; vertical-align:middle; border-radius:2px; }
+.mc-rules { margin:8px 0 0; padding-left:18px; font-size:12px; color:#b9c5cf; line-height:1.55; }
+.mc-rules li + li { margin-top:4px; }
+.mc-more summary { cursor:pointer; color:var(--accent); font-size:12px; font-weight:700; margin-top:6px; }
+.mc-price { font-size:.55em; color:#c9d5da; font-weight:750; margin-left:6px; letter-spacing:-.02em; }
+.mc-chg { font-size:.38em; font-weight:750; vertical-align:middle; }
+.mc-chg.pos { color:var(--green); } .mc-chg.neg { color:var(--red); }
+@media(max-width:1150px) { .mc-body { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:700px) { .mc-panel { padding:14px; } .mc-chart { height:300px; } .mc-pairs .chip, .mc-tfs .chip { padding:7px 10px; } .mc-facts { grid-template-columns:1fr 1fr; } }
