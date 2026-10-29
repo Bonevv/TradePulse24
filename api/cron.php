@@ -70,7 +70,7 @@ $key = (string) cfg()['twelvedata_key'];
 if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
     $errors[] = 'Липсва ключ за Twelve Data в api/config.php. Цените не се обновяват.';
 } elseif (($meta['blocked_until'] ?? 0) > $now) {
-    $errors[] = price_limit_message((int) $meta['blocked_until'] - $now);
+    $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след ' . ceil(($meta['blocked_until'] - $now) / 60) . ' мин.';
 } else {
     $okCount = 0;
     foreach (PAIRS as $pair => [$symbol]) {
@@ -94,7 +94,7 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
             say("$symbol: " . count($bars) . ' нови 15-минутни свещи');
         } catch (RateLimited $e) {
             $meta['blocked_until'] = $now + 900;
-            $errors[] = price_limit_message(900);
+            $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след 15 мин.';
             say("$symbol: лимит на заявките, спирам");
             break;
         } catch (Throwable $e) {
@@ -133,7 +133,6 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
                 $checked[] = $todo['id'];
             } catch (RateLimited $e) {
                 $meta['blocked_until'] = $now + 900;
-                $errors[] = price_limit_message(900);
                 say($todo['symbol'] . ': лимит на заявките при допълване на дупка');
             } catch (Throwable $e) {
                 $checked[] = $todo['id'];

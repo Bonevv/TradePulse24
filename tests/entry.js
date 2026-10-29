@@ -42,7 +42,7 @@ assert.equal(FX.pendingAdvice(pending, 1.083).advice, "void");
 assert.equal(FX.pendingAdvice({ ...pending, type: "limit" }, 1.086).kind, "buy_limit");
 
 // Праговете от историята.
-assert.deepEqual({ ...FX.entryLevels(null) }, { ok: .15, late: .5, measured: false });
+assert.deepEqual(FX.entryLevels(null), { ok: .15, late: .5, measured: false });
 const measured = FX.entryLevels({ n: 100, base: .3, late: [{ k: .1, n: 90, r: .25 }, { k: .25, n: 80, r: .16 }, { k: .5, n: 60, r: .05 }, { k: .75, n: 40, r: -.1 }] });
 assert.equal(measured.ok, .25); assert.equal(measured.late, .75); assert.equal(measured.measured, true);
 assert.equal(FX.entryLevels({ n: 100, base: .3, late: [{ k: .1, n: 90, r: -.05 }] }).ok, .05, "if even a small delay loses, only the entry itself is fine");
@@ -69,7 +69,7 @@ near(timing.late[2].r, 1, "+0.5R later");
 near(timing.late[3].r, 1.25 / 1.75, "+0.75R later");
 assert.ok(timing.late.every((row) => row.n === 1), "the losing trade never went in favour");
 assert.ok(timing.early.every((row) => row.n === 1 && row.r === -1 && row.sl === 1), "entering nearer the stop of a stopped trade still loses 1R");
-assert.deepEqual(Array.from(timing.back, (row) => [row.k, row.j, row.p]), [[.25, 0, 1], [.25, .1, 1], [.5, 0, 1], [.5, .1, 1]], "the winner returned to the entry");
+assert.deepEqual(timing.back.map((row) => [row.k, row.j, row.p]), [[.25, 0, 1], [.25, .1, 1], [.5, 0, 1], [.5, .1, 1]], "the winner returned to the entry");
 near(timing.back[0].r, 2, "a limit at the model entry gets the model result");
 assert.equal(timing.recover[0].p, 0, "the stopped trade never came back");
 
@@ -77,9 +77,6 @@ assert.equal(timing.recover[0].p, 0, "the stopped trade never came back");
 const bundled = { entries: { "x-H1": { id: "x-H1", key: "x", tf: "H1", version: 1, stats: { end: 10 }, per_pair: [{ pair: "EURUSD", timing }] } } };
 const saved = { entries: { "x-H1": { id: "x-H1", key: "x", tf: "H1", version: 1, stats: { end: 20 }, per_pair: [{ pair: "EURUSD" }] } } };
 assert.ok(FX.mergeResults(saved, bundled, {}).entries["x-H1"].per_pair[0].timing, "same rules keep the measurement");
-saved.entries["x-H1"].cost_model = "different-costs";
-assert.equal(FX.mergeResults(saved, bundled, {}).entries["x-H1"].per_pair[0].timing, undefined, "different costs need a new measurement");
-delete saved.entries["x-H1"].cost_model;
 saved.entries["x-H1"].version = 2;
 assert.equal(FX.mergeResults(saved, bundled, {}).entries["x-H1"].per_pair[0].timing, undefined, "new rules need a new measurement");
 

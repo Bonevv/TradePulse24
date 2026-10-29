@@ -209,7 +209,7 @@
 
   /** Минава по всички свещи на една двойка и връща списък със сделки/сигнали.
       subs = по-малки свещи на същата двойка [[свещи, секунди], ...] - от най-подробните. */
-  function simulate(s, strat, now, subs = [], fromTime = 0, deferPendingExpiry = false) {
+  function simulate(s, strat, now, subs = [], fromTime = 0) {
     const tfc = s.tfc, tf = s.tf, sec = tfc.seconds, info = s.info, pip = s.pip, ex = strat.exit;
     const siteDay = strat.session === "site" && tfc.style === "day";
     const ownHours = !!strat.own_hours;
@@ -320,7 +320,7 @@
     }
 
     if (st !== null) {
-      if (!deferPendingExpiry && st.status === "pending" && st.valid_until <= now) Object.assign(st, { status: "cancelled", reason: "expired", exit_time: st.valid_until });
+      if (st.status === "pending" && st.valid_until <= now) Object.assign(st, { status: "cancelled", reason: "expired", exit_time: st.valid_until });
       out.push(st);
     }
     if (strat.require_session_close && tfc.style === "day") out.omitted_days = incomplete.size;

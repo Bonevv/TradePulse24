@@ -5,8 +5,6 @@ const engine = new FX.Engine(prices(FX.PAIR_KEYS)).build(Math.floor(Date.now() /
 const filename = path.join(root, "data/catalog.json"), previous = JSON.parse(fs.readFileSync(filename, "utf8"));
 const original = JSON.parse(fs.readFileSync(path.join(root, "data/results.json"), "utf8"));
 const entries = {}, numeric = ["trades", "avg_r", "profit_factor", "total_r", "max_dd_r", "avg_first", "avg_second"];
-// JSON записва -0 като 0; останалите стойности се сравняват точно.
-const metric = (value) => value === 0 ? 0 : value;
 let legacy = 0;
 for (const strat of [...FX.CODED, ...FX.LIBRARY, ...FX.RESEARCH]) for (const tf of strat.tfs) {
   const result = engine.trades(strat, tf), entry = engine.entry(strat, tf, result);
@@ -30,12 +28,12 @@ for (const strat of [...FX.CODED, ...FX.LIBRARY, ...FX.RESEARCH]) for (const tf 
     assert.ok([...days.values()].every((count) => count === 1), entry.id + " daily fills");
   }
   if (original.entries[entry.id]) {
-    for (const field of numeric) assert.equal(metric(entry.stats[field]), metric(original.entries[entry.id].stats[field]), entry.id + ": original " + field);
+    for (const field of numeric) assert.equal(entry.stats[field], original.entries[entry.id].stats[field], entry.id + ": original " + field);
     legacy++;
   }
   if (!process.argv.includes("--write")) {
     assert.ok(previous.entries[entry.id], "Missing bundled result: " + entry.id);
-    for (const field of numeric) assert.equal(metric(entry.stats[field]), metric(previous.entries[entry.id].stats[field]), entry.id + ": bundled " + field);
+    for (const field of numeric) assert.equal(entry.stats[field], previous.entries[entry.id].stats[field], entry.id + ": bundled " + field);
   }
   entries[entry.id] = entry;
 }

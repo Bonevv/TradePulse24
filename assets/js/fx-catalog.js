@@ -54,9 +54,10 @@
         ? { ...row, historical_verdict: "good", verdict: "weak", verdict_label: "Слаба" } : row),
     };
   };
-  /* По-ранен резултат може да ползва измерването от каталога само със същите правила и разходи. */
+  /* Измерването за вход след сигнала идва с каталога. Записан по-рано резултат за същата версия
+     го няма, затова се взема от каталога: правилата са същите, а то е по историята. */
   function withTiming(entry, base) {
-    if (!base || (entry.version || 1) !== (base.version || 1) || (entry.cost_model || "model-v1") !== (base.cost_model || "model-v1") || !(entry.per_pair || []).some((row) => !row.timing)) return entry;
+    if (!base || (entry.version || 1) !== (base.version || 1) || !(entry.per_pair || []).some((row) => !row.timing)) return entry;
     return { ...entry, per_pair: entry.per_pair.map((row) => {
       if (row.timing) return row;
       const timing = (base.per_pair || []).find((p) => p.pair === row.pair)?.timing;

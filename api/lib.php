@@ -14,14 +14,6 @@ const NEWS_KEEP_DAYS = 30; // толкова дни минали събития 
 
 final class RateLimited extends RuntimeException {}
 
-/** Пауза след отказ от доставчика; не предсказва кога ще се поднови квотата му. */
-function price_limit_message(int $seconds): string
-{
-    $minutes = max(1, (int) ceil($seconds / 60));
-    return 'Twelve Data ограничи заявките. Следващ автоматичен опит най-рано след ' . $minutes
-        . ' мин. Ако дневната квота е изчерпана, е нужно да изчакаш нейното подновяване.';
-}
-
 const LOGIN_WINDOW = 900;      // грешните опити от един адрес се помнят 15 минути
 const LOGIN_CLIENT_LIMIT = 5;  // толкова грешни опити от един адрес за 15 минути
 const LOGIN_SITE_LIMIT = 30;   // толкова грешни опити общо за сайта за един час

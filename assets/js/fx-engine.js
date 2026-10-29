@@ -55,9 +55,7 @@
         ends.push(s.t[s.n - 1] + s.sec);
         s.memo = {};
         const subs = [[this.get(pair, "M15"), 900], [this.get(pair, "H1"), 3600]];
-        // Първо проверяваме по-малките свещи след края на основната графика.
-        // Иначе стар чакащ модел може да бъде отменен, въпреки че вече е имал вход.
-        const simulated = FX.bt.simulate(s, strat, this.now, subs, 0, true);
+        const simulated = FX.bt.simulate(s, strat, this.now, subs);
         if (simulated.omitted_days !== undefined) omitted[pair] = simulated.omitted_days;
         for (const tr of simulated) {
           this.catchUp(tr, s, strat);
@@ -80,10 +78,7 @@
       if (tr.status !== "pending" && tr.status !== "open") return;
       let fine = this.get(s.pair, "M15"), step = 900;
       if (!fine) { fine = this.get(s.pair, "H1"); step = 3600; }
-      if (!fine) {
-        if (tr.status === "pending" && tr.valid_until <= this.now) Object.assign(tr, { status: "cancelled", reason: "expired", exit_time: tr.valid_until });
-        return;
-      }
+      if (!fine) return;
       const info = s.info, pip = s.pip, ex = strat.exit, start = s.t[s.n - 1] + s.sec;
       for (let j = 0; j < fine.n; j++) {
         if (fine.t[j] < start) continue;
