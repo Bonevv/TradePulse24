@@ -32,15 +32,31 @@ try {
             respond_json(['ok' => true]);
         case 'workspace':
             respond_json(['ok' => true, 'workspace' => $ws]);
+        case 'installation':
+            respond_json(['ok' => true, 'installation' => maintenance_installation()]);
+        case 'backup':
+            respond_json(['ok' => true, 'backup' => maintenance_backup('download')]);
+        case 'costs':
+            if (!is_array($payload)) throw new InvalidArgumentException('Липсват разходи.');
+            $costs = validate_costs($payload);
+            maintenance_backup('costs');
+            write_json(DATA_DIR . '/costs.json', $costs);
+            respond_json(['ok' => true, 'costs' => $costs]);
+        case 'restore':
+            if (!is_array($payload)) throw new InvalidArgumentException('Липсва резервно копие.');
+            maintenance_restore($payload);
+            respond_json(['ok' => true, 'workspace' => workspace_read()]);
         case 'custom':
             if (!is_array($payload)) throw new InvalidArgumentException('Липсват стратегии.');
             $ws = workspace_custom($payload, $ws);
+            maintenance_backup('drafts');
             write_json(private_dir() . '/workspace.json', $ws);
             respond_json(['ok' => true, 'workspace' => $ws]);
         case 'draft-results':
         case 'results':
             if (!is_array($payload) || !is_array($payload['entries'] ?? null)) throw new InvalidArgumentException('Липсват резултати.');
             $ws = workspace_results($payload['entries'], $ws);
+            maintenance_backup($action);
             if ($action === 'results') {
                 if (!is_array($payload['published'] ?? null)) throw new InvalidArgumentException('Липсва избор за публикуване.');
                 workspace_publish($payload['published'], $ws);

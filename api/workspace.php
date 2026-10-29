@@ -1,12 +1,15 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/maintenance.php';
 
 // Черновите се пазят отделно от версията, която посетителите виждат.
 function workspace_read(): array
 {
-    $public = read_json(DATA_DIR . '/results.json', ['entries' => [], 'published' => []]);
+    $public = merge_builtin_results(read_json(DATA_DIR . '/results.json', ['entries' => [], 'published' => []]));
     $local = read_json(private_dir() . '/workspace.json', []);
-    return array_merge(['strategies' => read_json(DATA_DIR . '/custom.json', ['strategies' => []])['strategies'], 'entries' => $public['entries'], 'history' => []], $local);
+    $ws = array_merge(['strategies' => read_json(DATA_DIR . '/custom.json', ['strategies' => []])['strategies'], 'entries' => $public['entries'], 'history' => []], $local);
+    $ws['entries'] = merge_builtin_results(['entries' => $ws['entries']])['entries'];
+    return $ws;
 }
 
 function spec_signature(array $spec): string
@@ -74,6 +77,7 @@ function workspace_publish(array $published, array $ws): void
     foreach ($published as $id) {
         $entry = $ws['entries'][$id] ?? null;
         if (!$entry) throw new InvalidArgumentException('Първо тествай всяка избрана за публикуване стратегия.');
+        if (!costs_match_current($entry)) throw new InvalidArgumentException('Разходите са променени. Пусни нов тест преди публикуване.');
         $key = $entry['key'];
         if (isset($custom[$key])) {
             if (($entry['version'] ?? 0) !== $custom[$key]['version']) throw new InvalidArgumentException('Има резултат от стара версия. Пусни нов тест.');

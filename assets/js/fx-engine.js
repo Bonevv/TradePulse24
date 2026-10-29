@@ -15,6 +15,8 @@
       this.prices = prices;
       this.quotes = quotes;
       this.launch = opts.launch || 0;
+      this.costs = FX.costs ? FX.costs.normalize(opts.costs) : null;
+      this.keepIds = new Set(opts.keepIds || []);
       this.series = {};
     }
 
@@ -30,7 +32,11 @@
         for (const tf of FX.TF_KEYS) {
           const sec = FX.TIMEFRAMES[tf].seconds;
           const bars = cleaned[tf].filter((b) => b[0] + sec <= now);
-          if (bars.length > 120) mine[tf] = S[pair + "|" + tf] = new FX.Series(pair, tf, bars);
+          if (bars.length > 120) {
+            const series = new FX.Series(pair, tf, bars);
+            if (this.costs) series.info = FX.costs.info(pair, this.costs);
+            mine[tf] = S[pair + "|" + tf] = series;
+          }
         }
         for (const s of Object.values(mine)) s.peers = mine;
       }
@@ -92,17 +98,14 @@
     /** Карта на стратегията за сайта: статистика, по двойки, последни сделки, на живо. */
     entry(strat, tf, res) {
       const { trades, start, end } = res;
+      const provisional = FX.isProvisional ? FX.isProvisional(strat, tf) : !!strat.provisional;
       const stats = FX.bt.summarize(trades, start, end);
-      if (strat.provisional && stats.verdict === "good") { stats.verdict = "weak"; stats.verdict_label = "Слаба"; }
+      if (provisional && stats.verdict === "good") { stats.verdict = "weak"; stats.verdict_label = "Слаба"; }
+      // Отделна оценка за всеки инструмент: стратегия може да е „Силна“ за златото и да губи на EUR/USD.
       const perPair = [];
       for (const pair of FX.PAIR_KEYS) {
-        const rs = trades.filter((t) => t.pair === pair && t.status === "closed").map((t) => t.r);
-        if (!rs.length) continue;
-        perPair.push({
-          pair, name: FX.PAIRS[pair].name, trades: rs.length,
-          win_rate: FX.round((rs.filter((r) => r > 0.02).length / rs.length) * 100, 1),
-          avg_r: FX.round(rs.reduce((a, b) => a + b, 0) / rs.length, 3), total_r: FX.round(rs.reduce((a, b) => a + b, 0), 1),
-        });
+        const own = trades.filter((t) => t.pair === pair && t.status === "closed");
+        if (own.length) perPair.push(FX.pairRow(own, pair, start, end, provisional));
       }
       const closed = trades.filter((t) => t.status === "closed").sort((a, b) => a.exit_time - b.exit_time);
       const recent = closed.slice(-12).reverse().map((t) => ({ pair: t.pair, dir: t.dir, signal_time: t.signal_time, exit_time: t.exit_time, r: t.r, reason: t.reason, id: t.id }));
@@ -112,7 +115,9 @@
         id: `${strat.key}-${tf}`, key: strat.key, tf, tf_label: tfc.label, style: strat.style || tfc.style,
         name: strat.name, short: strat.short, rules: strat.rules, source: strat.source, origin: strat.origin,
         approx: !!strat.approx, url: strat.url || null, note: strat.note || null, exit_rules: strat.exit_rules || null,
-        ...(strat.version ? { version: strat.version, provisional: !!strat.provisional } : {}),
+        version: strat.version || strat.spec?.version || 1, provisional,
+        retired: FX.isRetired ? FX.isRetired(strat, tf) : false,
+        ...(this.costs ? { cost_model: FX.costs.fingerprint(this.costs), cost_profile: this.costs } : {}),
         ...(res.data_quality ? { data_quality: res.data_quality } : {}),
         session: strat.session, group: strat.group || "", pairs: strat.pairs || FX.PAIR_KEYS,
         stats, per_pair: perPair, recent,
@@ -122,14 +127,18 @@
 
     /** Сигнали за сайта: текущите + приключилите в последните 14 дни. */
     signals(strat, tf, trades) {
-      const keep = ["id", "pair", "tf", "status", "orders", "signal_time", "valid_until", "why", "reason", "exit_time", "dir", "entry", "stop", "stop0", "tp1", "tp2", "fill_price", "fill_time", "half", "tp1_time", "r", "parts", "order_type", "live"];
+      const keep = ["id", "pair", "tf", "status", "orders", "signal_time", "valid_until", "why", "reason", "exit_time", "dir", "entry", "stop", "stop0", "tp1", "tp2", "fill_price", "fill_time", "half", "tp1_time", "r", "parts", "order_type", "live", "cost_r", "cost_breakdown", "gross_r"];
       const out = [];
       for (const tr of trades) {
+        const tracked = this.keepIds.has(tr.id);
+        if (FX.isRetired?.(strat, tf) && !tracked) continue;
         const current = tr.status === "pending" || tr.status === "open";
-        if (!current && !((tr.exit_time || 0) >= this.now - RECENT_DAYS * 86400)) continue;
+        if (!tracked && !current && !((tr.exit_time || 0) >= this.now - RECENT_DAYS * 86400)) continue;
         const x = {};
         for (const k of keep) if (k in tr) x[k] = tr[k];
-        Object.assign(x, { strategy: `${strat.key}-${tf}`, strategy_name: strat.name, tf_label: FX.TIMEFRAMES[tf].label, style: strat.style || FX.TIMEFRAMES[tf].style, pair_name: FX.PAIRS[tr.pair].name });
+        Object.assign(x, { strategy: `${strat.key}-${tf}`, strategy_name: strat.name, version: strat.version || strat.spec?.version || 1,
+          retired: FX.isRetired?.(strat, tf) || false, cost_model: this.costs ? FX.costs.fingerprint(this.costs) : "model-v1",
+          tf_label: FX.TIMEFRAMES[tf].label, style: strat.style || FX.TIMEFRAMES[tf].style, pair_name: FX.PAIRS[tr.pair].name });
         out.push(x);
       }
       return out;
@@ -138,10 +147,10 @@
     pairsInfo() {
       const out = {};
       for (const pair of FX.PAIR_KEYS) {
-        const info = FX.PAIRS[pair], d1 = this.get(pair, "D1"), q = this.quotes[pair] || {};
+        const info = this.costs ? FX.costs.info(pair, this.costs) : FX.PAIRS[pair], d1 = this.get(pair, "D1"), q = this.quotes[pair] || {};
         const prev = d1 ? d1.c[d1.n - 1] : null, price = q.price || prev;
         out[pair] = {
-          name: info.name, pip: info.pip, digits: info.digits, spread: info.spread, price, price_time: q.time || null,
+          name: info.name, pip: info.pip, digits: info.digits, spread: info.spread, costs: info.costs || null, price, price_time: q.time || null,
           change_pct: price && prev ? FX.round(((price - prev) / prev) * 100, 2) : null,
         };
       }

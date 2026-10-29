@@ -10,7 +10,7 @@ const LAB = {
   custom: [], history: [], pulsChecking: false, pulsCheck: null,
   filter: "all", query: "", form: null, saving: false,
 };
-const GROUP_FILTERS = [["all", "Всички"], ["revised", "Преработени"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
+const GROUP_FILTERS = [["all", "Всички"], ["new", "Новите 10"], ["archived", "Архив"], ["revised", "Преработени"], ["За тест", "Нови за тест"], ["Тренд", "Тренд"], ["Пробив", "Пробив"], ["Осцилатори", "Осцилатори"], ["Свещи", "Свещи"], ["Мои стратегии", "Мои"], ["tested", "Тествани"], ["published", "Публикувани"]];
 
 function labInit() {
   if (LAB.inited || !S.catalog) return;
@@ -85,10 +85,13 @@ function labLogin() {
 function labRowStats(e) {
   if (!e) return `<td colspan="6" class="muted">За тест</td>`;
   const s = e.stats;
+  const costNote = (e.cost_model || "model-v1") !== FX.costs.fingerprint(S.costProfile) ? '<small class="validation-note">Други разходи — нужен е нов тест.</small>' : "";
   const omitted = Object.values(e.data_quality?.omitted_days || {}).reduce((sum, n) => sum + n, 0);
   const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${e.validation.holdout.avg_r == null ? "—" : fmtR(e.validation.holdout.avg_r)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}${e.validation.note ? `<br>${esc(e.validation.note)}` : ""}${omitted ? `<br>Пропуснати непълни сесии по инструменти: ${omitted}.` : ""}</small>` : "";
+  const strong = strongPairs(e).map((p) => p.name);
+  const pairs = strong.length ? `<small class="validation-note pos">Силна за: ${esc(strong.join(", "))}</small>` : (e.per_pair || []).length ? `<small class="validation-note">Няма двойка „Силна“.</small>` : "";
   if (!s.trades) return `<td>${verdictBadge(s)}</td><td colspan="5" class="muted">няма сделки</td>`;
-  return `<td>${verdictBadge(s)}${validation}</td><td class="num">${s.trades}</td><td class="num ${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</td>
+  return `<td>${verdictBadge(s)}${costNote}${pairs}${validation}</td><td class="num">${s.trades}</td><td class="num ${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</td>
     <td class="num">${s.profit_factor ?? "∞"}</td><td class="num">${fmtR(s.avg_first)} / ${fmtR(s.avg_second)}</td>
     <td class="num">${s.longs?.avg_r == null ? "—" : fmtR(s.longs.avg_r)} / ${s.shorts?.avg_r == null ? "—" : fmtR(s.shorts.avg_r)}</td>`;
 }
@@ -112,6 +115,10 @@ function revisionDetails(strat, entry) {
 function labFilterMatch(v) {
   const f = LAB.filter, q = LAB.query.trim().toLowerCase();
   if (q && !(`${v.strat.name} ${v.strat.source || ""} ${v.tf}`.toLowerCase().includes(q))) return false;
+  const retired = FX.isRetired(v.strat, v.tf);
+  if (f === "archived") return retired;
+  if (retired) return false;
+  if (f === "new") return FX.NEW_CANDIDATES.some((strat) => strat.key === v.key);
   if (f === "all") return true;
   if (f === "revised") return !!v.strat.parent_key;
   if (f === "tested") return !!LAB.results[v.id];
@@ -126,12 +133,12 @@ function labMain(mine = false) {
   list.sort((a, b) => {
     const ea = LAB.results[a.id], eb = LAB.results[b.id];
     if (!ea !== !eb) return ea ? -1 : 1;
-    if (ea && eb) return (order[ea.stats.verdict] - order[eb.stats.verdict]) || ((eb.stats.avg_r ?? -9) - (ea.stats.avg_r ?? -9));
+    if (ea && eb) return (order[bestVerdict(ea)] - order[bestVerdict(eb)]) || (ratingAvg(eb) - ratingAvg(ea));
     return a.strat.name.localeCompare(b.strat.name, "bg");
   });
   const visibleIds = new Set(all.map((v) => v.id));
   const tested = Object.keys(LAB.results).filter((id) => visibleIds.has(id)).length;
-  const good = Object.values(LAB.results).filter((e) => e && visibleIds.has(e.id) && e.stats.verdict === "good").length;
+  const good = Object.values(LAB.results).filter((e) => e && visibleIds.has(e.id) && (e.stats.verdict === "good" || strongPairs(e).length)).length;
   const sel = LAB.selected.size;
   const p = LAB.progress;
   const loadBox = LAB.loaded
@@ -144,10 +151,10 @@ function labMain(mine = false) {
     <div class="page-heading"><div><p class="kicker">САМО ЗА АДМИНИСТРАТОР</p><h1>${S.route.view === "workshop" ? "Мои стратегии" : "Лаборатория"}</h1>
       <p>${mine ? "Запази идея, провери правилата и я тествай. Черновите и резултатите им остават тук, докато изрично не ги публикуваш." : "Тествай дневните или суинг вариантите. Новите идеи първо минават през исторически тест и отделен период за проверка."}</p></div>
       <div class="chips-row"><a class="btn btn-outline" href="${labBase()}/new">+ Нова стратегия</a></div></div>
-    ${pulsLabPanel()}
+    ${pulsLabPanel()}${labMaintenancePanel()}
     <div class="grid-2 even">
       <section class="panel"><p class="kicker">1. ИСТОРИЯ</p><h3 style="margin-bottom:8px">Цени за теста</h3>${loadBox}</section>
-      <section class="panel"><p class="kicker">2. ТЕСТ И ПУБЛИКУВАНЕ</p><h3 style="margin-bottom:8px">${tested} тествани · ${good} „Силна“ · ${LAB.published.size} публикувани</h3>
+      <section class="panel"><p class="kicker">2. ТЕСТ И ПУБЛИКУВАНЕ</p><h3 style="margin-bottom:8px">${tested} тествани · ${good} със „Силна“ двойка · ${LAB.published.size} публикувани</h3>
         <div class="chips-row">
           <button class="btn btn-primary" data-lab="run" ${!LAB.loaded || !sel || LAB.running ? "disabled" : ""}>${LAB.running ? "Тествам…" : `Тествай избраните (${sel})`}</button>
           <button class="btn btn-outline" data-lab="save" ${LAB.saving ? "disabled" : ""}>${LAB.saving ? "Записвам…" : LAB.dirty ? "Запази тестовете ●" : "Запази тестовете"}</button>
@@ -198,7 +205,7 @@ async function labLoadHistory() {
     for (const p of FX.PAIR_KEYS) for (const tf of ["M15", "H1", "D1"]) files.push([p, tf]);
     let done = 0, bars = 0;
     await Promise.all(files.map(async ([p, tf]) => {
-      const r = await fetch(`data/prices/${p}_${tf}.json?t=${Math.floor(Date.now() / 600000)}`);
+      const r = await fetch(`data/prices/${p}_${tf}.json`, { cache: "no-cache" });
       if (!r.ok) throw new Error(`${p} ${tf}: ${r.status}`);
       const data = await r.json();
       (prices[p] = prices[p] || {})[tf] = data.bars || [];
@@ -211,7 +218,7 @@ async function labLoadHistory() {
     LAB.loading = "Подготвям графиките…";
     labRender();
     LAB.bars = bars;
-    labWorker().postMessage({ cmd: "load", prices, quotes: (S.meta && S.meta.quotes) || {}, now: now(), launch: S.meta ? S.meta.launch : 0, custom: LAB.custom });
+    labWorker().postMessage({ cmd: "load", prices, quotes: (S.meta && S.meta.quotes) || {}, now: now(), launch: S.meta ? S.meta.launch : 0, custom: LAB.custom, costs: S.costProfile });
   } catch (e) {
     LAB.loading = null;
     LAB.loadError = "Историята не можа да се свали: " + e.message;
@@ -509,7 +516,7 @@ document.addEventListener("click", (ev) => {
     else if (a === "publish") labSave(true);
     else if (a === "select-visible") { labVariants().filter((v) => S.route.view !== "workshop" || v.strat.origin === "custom").filter(labFilterMatch).forEach((v) => LAB.selected.add(v.id)); render(); }
     else if (a === "select-none") { LAB.selected.clear(); render(); }
-    else if (a === "publish-good") { for (const [id, e] of Object.entries(LAB.results)) if (e && e.stats.verdict === "good") LAB.published.add(id); LAB.dirty = true; render(); }
+    else if (a === "publish-good") { for (const [id, e] of Object.entries(LAB.results)) if (e && (e.stats.verdict === "good" || strongPairs(e).length)) LAB.published.add(id); LAB.dirty = true; render(); }
     else if (a === "publish-none") { LAB.published.clear(); LAB.dirty = true; render(); }
     else if (a === "form-save") formSave(false);
     else if (a === "form-delete") { if (confirm("Да изтрия ли стратегията?")) formSave(true); }

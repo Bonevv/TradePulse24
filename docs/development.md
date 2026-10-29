@@ -1,6 +1,6 @@
 # Работа по TradePulse24
 
-PHP 7.4+ с cURL и Apache 2.4 са достатъчни за сайта. Препоръчва се PHP 8.x. Няма Composer или npm зависимости. Node.js е нужен за автоматичните проверки на JavaScript.
+PHP 7.4+ с cURL и Apache 2.4 са достатъчни за сайта. Препоръчва се PHP 8.x. Няма Composer или npm зависимости. Node.js се използва само за проверките при разработка; на хостинга не е нужен.
 
 ## Настройки
 
@@ -29,6 +29,10 @@ node tests/book-candidates.js
 node tests/pair-selection.js
 node tests/calendar.js
 node tests/revisions.js
+node tests/session-candidates.js
+node tests/observation-risk-costs.js
+php tests/maintenance.php
+python tests/release.py
 ```
 
 Първите три пазят наличните стратегии, следенето и ориентирите 1R/2R. `workflow.js` проверява двата стила, личните чернови, изричното публикуване, обясненията за новините и целостта на дневника. `backend.php` проверява версии, архивиране на старите правила, отхвърляне на остарели резултати и валидиране на времевите интервали.
@@ -53,6 +57,12 @@ python tests/browser.py
 
 Тестовете не извикват външни услуги и не променят оригиналната история. Обновяването с Twelve Data се проверява отделно със собствения ключ и лимитите на акаунта.
 
+`session-candidates.js` проверява десетте нови кандидата и поправения дневен EMA: приключилите сделки не се променят от бъдещи свещи, дневните изходи са в същия ден, а рискът се проверява и при гап. Проверява се и проследяването на архивен модел след обичайния 14-дневен прозорец. `observation-risk-costs.js` покрива суапа през лятното време, частичния обем, първоначалните записи на журнала, групирането и личния риск. `maintenance.php` прави временен сайт за проверка на резервните копия, възстановяването и файловете на версията.
+
+Браузърната проверка изисква `DocumentRoot` в избрания runtime да сочи към това работно копие. При различен каталог тестът спира преди стартиране на Apache. Използвай `TP24_TEST_RUNTIME` за отделен runtime; това пази другите работни копия от тестови записи.
+
+След промяна на кодов файл или вградения каталог обнови списъка на пакета с `python tests/release.py --write`. Пълното преизчисляване на вградените резултати е `node tests/catalog-report.js --write`; без `--write` командата само сравнява. Това са инструменти за разработка, без връзка с доставчици и без Node.js на хостинга.
+
 ## Къде е логиката
 
 - `fx-core.js`, `fx-series.js`, `fx-indicators.js` — свещи, време и индикатори.
@@ -60,6 +70,12 @@ python tests/browser.py
 - `fx-strategies.js`, `fx-library.js`, `fx-candidates.js` — правила на стратегиите.
 - `fx-book-candidates.js` — седемте нови идеи с фиксирани собствени правила и версии.
 - `fx-revisions.js`, `fx-evaluation.js` — преработки, сравнения, оценки по инструменти и подбор на модели.
+- `fx-catalog.js`, `data/catalog.json` — архив, версии и вградени резултати, които се сливат с работните данни.
+- `fx-new-candidates.js` — десетте кандидата с предварително описани правила в `docs/new-candidates.md`.
+- `fx-costs.js`, `api/state.php` — разходи и публично четене на профила, без секрети.
+- `fx-observed.js`, `observed-ui.js` — журнал на наблюдаваните в браузъра сигнали.
+- `fx-signal-tools.js`, `notifications.js` — групиране, състояние на входа и известия при отворен сайт.
+- `api/maintenance.php`, `maintenance-ui.js` — сървърни копия, възстановяване и проверка на файловете.
 - `fx-builder.js`, `lab.js`, `fx-worker.js` — конструктор и тестове.
 - `api/workspace.php`, `api/save.php` — чернови, версии и публикуване.
 - `fx-news.js` — преводи и предварително написани обяснения на събитията.
@@ -77,7 +93,7 @@ python tests/browser.py
 location ^~ /data/private/ { deny all; }
 location ^~ /tests/ { deny all; }
 location ~ (^|/)\. { deny all; }
-location ~ ^/api/(?!(?:cron|save|puls)\.php$).*\.php$ { deny all; }
+location ~ ^/api/(?!(?:cron|save|puls|state)\.php$).*\.php$ { deny all; }
 location ~ ^/(README|AGENTS|CHANGELOG)\.md$ { deny all; }
 location ~ ^/data/.*\.(php|phtml|phar|lock|tmp[0-9]*)$ { deny all; }
 ```

@@ -40,7 +40,10 @@ for (const s of scripts) {
   await new Promise(setImmediate);
   await new Promise(setImmediate);
   assert.equal(vm.runInContext("S.data.ready", sandbox), true, "catalog works without cron metadata");
-  assert.equal(vm.runInContext("strategies().length", sandbox), 93, "all 93 tested variants available");
+  const originalIds = Object.keys(JSON.parse(fs.readFileSync(path.join(root, "data/results.json"), "utf8")).entries);
+  sandbox.originalIds = originalIds;
+  assert.ok(vm.runInContext("originalIds.every(id => strategies().some(entry => entry.id === id))", sandbox), "all original tested variants remain available, including the archive");
+  assert.ok(vm.runInContext("strategies().some(entry => entry.id === 'lib_donchian_trend-H4')", sandbox), "4.4 entries load without replacing the owner's results file");
   const html = el("main").innerHTML;
   assert.ok(html.includes("Силна") && html.includes("Не работи"), "rankings shown");
   assert.ok(!html.includes("От сайтове") && !html.includes("От книги"), "no provenance filters");

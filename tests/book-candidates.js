@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const context = vm.createContext({ console, Date, Math, Number, Intl, Array, Set, Map });
 context.self = context;
-for (const file of ["fx-core", "fx-indicators", "fx-series", "fx-backtest", "fx-strategies", "fx-builder", "fx-library", "fx-candidates", "fx-book-candidates", "fx-engine"]) {
+for (const file of ["fx-core", "fx-indicators", "fx-series", "fx-backtest", "fx-strategies", "fx-builder", "fx-library", "fx-candidates", "fx-book-candidates", "fx-evaluation", "fx-engine"]) {
   vm.runInContext(fs.readFileSync(path.join(root, `assets/js/${file}.js`), "utf8"), context, { filename: file });
 }
 const FX = context.FX, ex = { parts: [[1, null]] };

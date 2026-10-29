@@ -16,6 +16,7 @@
 *.log
 /data/private/*
 !/data/private/.htaccess
+/data/costs.json
 
 __pycache__/
 

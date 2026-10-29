@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "..");
 const ctx = vm.createContext({ console, Date, Math, Number, Intl, Array, Set, Map });
 ctx.self = ctx;
-for (const file of ["fx-core", "fx-indicators", "fx-series", "fx-backtest", "fx-strategies", "fx-builder", "fx-library", "fx-engine"]) {
+for (const file of ["fx-core", "fx-indicators", "fx-series", "fx-backtest", "fx-strategies", "fx-builder", "fx-library", "fx-evaluation", "fx-engine"]) {
   vm.runInContext(fs.readFileSync(path.join(root, `assets/js/${file}.js`), "utf8"), ctx, { filename: file });
 }
 const FX = ctx.FX;

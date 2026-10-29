@@ -76,6 +76,7 @@
 
   function take(st, k, price, t) {
     st.parts[k].px = price;
+    st.parts[k].closed_at = Math.trunc(t);
     if (!st.half) {
       st.half = true;
       st.tp1_time = Math.trunc(t);
@@ -87,11 +88,13 @@
     const risk = Math.abs(st.fill_price - st.stop0), d = st.dir;
     let gross = 0;
     for (const p of st.parts) gross += (p.w * d * (p.px - st.fill_price)) / risk;
-    Object.assign(st, { status: "closed", reason, exit_time: Math.trunc(t), r: R(gross - (info.spread * pip) / risk, 3) });
+    const costs = FX.costs ? FX.costs.calculate(st, info, t) : { total: (info.spread * pip) / risk };
+    Object.assign(st, { status: "closed", reason, exit_time: Math.trunc(t), r: R(gross - costs.total, 3) });
+    if (info.costs) Object.assign(st, { gross_r: R(gross, 3), cost_r: R(costs.total, 3), cost_breakdown: costs });
   }
 
   function closeAll(st, info, pip, price, t, reason) {
-    for (const p of st.parts) if (p.px === null) p.px = price;
+    for (const p of st.parts) if (p.px === null) { p.px = price; p.closed_at = Math.trunc(t); }
     finish(st, info, pip, t, reason);
   }
 
@@ -142,6 +145,12 @@
       if (!hits.length) return;
       const [, k, price] = hits[0];
       if (st.orders[k].anchor_stop && (price - st.orders[k].stop) * st.orders[k].dir <= 0) {
+        Object.assign(st, { status: "cancelled", reason: "void", exit_time: Math.trunc(t) });
+        return;
+      }
+      const selected = st.orders[k], actualRisk = (price - selected.stop) * selected.dir;
+      if (selected.min_risk !== undefined && (actualRisk < selected.min_risk - 1e-10 || actualRisk > selected.max_risk + 1e-10)
+        || selected.fixed_target && (selected.tp_level - price) * selected.dir + 1e-10 < actualRisk) {
         Object.assign(st, { status: "cancelled", reason: "void", exit_time: Math.trunc(t) });
         return;
       }
@@ -240,6 +249,7 @@
     }
 
     function newPending(i, found) {
+      if (strat.strict_daily_fills && maxPerDay && lastDay === s.date[i]) return null;
       const [rawOrders, why] = found;
       const orders = rawOrders.map((od) => prepare(s, i, od, strat));
       if (!orders.length || orders.some((od) => od === null)) return null;
@@ -257,6 +267,7 @@
     for (let i = 60; i < s.n; i++) {
       if (st !== null) {
         runBar(st, i);
+        if (strat.strict_daily_fills && st.fill_time) lastDay = FX.local(st.fill_time).date;
         if (st.status === "closed" && st.reason === "reverse" && st.then) {
           out.push(st);
           const [j, found] = st.then;

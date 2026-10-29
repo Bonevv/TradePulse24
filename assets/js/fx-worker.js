@@ -1,5 +1,5 @@
 /* Лабораторията тества стратегиите тук - в отделна нишка, за да не замръзва страницата. */
-importScripts("fx-core.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-revisions.js", "fx-evaluation.js", "fx-engine.js");
+importScripts("fx-core.js", "fx-costs.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-revisions.js", "fx-catalog.js", "fx-new-candidates.js", "fx-evaluation.js", "fx-engine.js");
 
 let engine = null;
 let catalog = {};
@@ -21,7 +21,7 @@ onmessage = (ev) => {
   try {
     if (m.cmd === "load") {
       const t0 = Date.now();
-      engine = new FX.Engine(m.prices, m.quotes || {}, { launch: m.launch || 0 }).build(m.now);
+      engine = new FX.Engine(m.prices, m.quotes || {}, { launch: m.launch || 0, costs: m.costs }).build(m.now);
       buildCatalog(m.custom);
       postMessage({ type: "loaded", ms: Date.now() - t0 });
     } else if (m.cmd === "custom") {
@@ -41,10 +41,10 @@ onmessage = (ev) => {
           const training = FX.bt.summarize(res.trades.filter((t) => t.status === "closed" && t.exit_time < cutoff), res.start, cutoff);
           const holdout = FX.bt.summarize(res.trades.filter((t) => t.status === "closed" && t.signal_time >= cutoff), cutoff, res.end);
           const chronological = training.trades >= 30 && holdout.trades >= 30 && training.avg_r > 0 && holdout.avg_r >= 0.08 && (holdout.profit_factor === null || holdout.profit_factor >= 1.15);
-          const passed = chronological && !strat.provisional;
+          const passed = chronological && !entry.provisional;
           entry.validation = { cutoff, training, holdout, passed, chronological };
           entry.version = strat.version || strat.spec?.version || 1;
-          if (strat.provisional) entry.validation.note = "Историята вече е разглеждана. Това е диагностичен период; за потвърждение трябват неизползвани данни или наблюдение занапред.";
+          if (entry.provisional) entry.validation.note = "Историята вече е разглеждана. Това е диагностичен период; за потвърждение трябват неизползвани данни или наблюдение занапред.";
           if (entry.stats.verdict === "good" && !passed) { entry.stats.verdict = "weak"; entry.stats.verdict_label = "Слаба"; entry.validation.note = "Общият тест е положителен, но отделният период още не потвърждава оценка „Силна“."; }
         }
         if (entry) {

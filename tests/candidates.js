@@ -22,7 +22,7 @@ for (const [name, calc] of Object.entries({ kama: (b) => FX.ind.kama(b.map((x) =
   else assert.deepEqual(full.slice(0, 300), short, name + " does not read future bars");
 }
 context.onmessage({ data: { cmd: "load", prices, now: Date.now() / 1000, custom: [] } });
-const items = FX.RESEARCH.filter((s) => !s.parent_key).flatMap((s) => s.tfs.map((tf) => ({ key: s.key, tf })));
+const items = FX.RESEARCH.filter((s) => !s.parent_key && (s.key.startsWith("research_") || FX.BOOK_CANDIDATES.includes(s))).flatMap((s) => s.tfs.map((tf) => ({ key: s.key, tf })));
 context.onmessage({ data: { cmd: "run", items } });
 assert.ok(!output.some((m) => m.type === "error"), JSON.stringify(output.filter((m) => m.type === "error")));
 const results = output.filter((m) => m.type === "result");

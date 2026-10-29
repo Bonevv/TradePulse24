@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -23,15 +24,20 @@ def digest(path):
 with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
     temporary = Path(folder)
     site = temporary / "site"
-    shutil.copytree(ROOT, site, ignore=shutil.ignore_patterns(".git", "*.log", "config.php", "config.local.php", "workspace.json", "*-cache.json", "*.lock"))
+    shutil.copytree(ROOT, site, ignore=shutil.ignore_patterns(".git", "*.log", "config.php", "config.local.php", "workspace.json", "*-cache.json", "*.lock", "backups", "costs.json"))
     shutil.copyfile(site / "api/config.example.php", site / "api/config.php")
     (site / "data/news.json").write_text(json.dumps({"events": [{"id": "browser-boc", "title": "BOC Monetary Policy Report", "currency": "CAD", "impact": "high", "time": int(time.time()) + 3600, "forecast": "", "previous": "", "actual": None, "source": "Тестов календар"}], "updated": int(time.time())}))
     config = (RUNTIME / "httpd.conf").read_text()
+    document_root = re.search(r'^DocumentRoot\s+"([^"]+)"', config, re.MULTILINE)
+    if not document_root or Path(document_root.group(1)).resolve() != ROOT.resolve():
+        raise RuntimeError("Тестовият Apache трябва да сочи към това копие на проекта. Задай подходящ TP24_TEST_RUNTIME.")
     config = config.replace("127.0.0.1:8080", "127.0.0.1:8081").replace(str(ROOT), str(site))
     config = config.replace(str(RUNTIME / "run/httpd.pid"), str(temporary / "httpd.pid"))
     config = config.replace(str(RUNTIME / "logs/apache-error.log"), str(temporary / "apache-error.log"))
     (temporary / "httpd.conf").write_text(config)
     process_env = os.environ.copy()
+    for secret in ["GROQ_API_KEY", "GROQ_MODEL", "TWELVEDATA_API_KEY", "TP24_CRON_TOKEN"]:
+        process_env.pop(secret, None)
     process_env.update({"TP24_ADMIN_PASSWORD": "local-browser-test-only", "LD_LIBRARY_PATH": str(RUNTIME / "runtime/usr/lib/x86_64-linux-gnu"), "PHP_INI_SCAN_DIR": ""})
     process = subprocess.Popen([str(RUNTIME / "runtime/usr/sbin/apache2"), "-f", str(temporary / "httpd.conf"), "-DFOREGROUND"], env=process_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
     base = "http://127.0.0.1:8081"
@@ -58,9 +64,14 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             browser = playwright.chromium.launch(executable_path="/usr/bin/chromium", headless=True, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
             errors, requests = [], []
+            def open_maintenance():
+                panel = page.locator("details.maintenance-panel")
+                if not panel.evaluate("element => element.open"):
+                    panel.locator("summary").first.click()
+
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("request", lambda request: requests.append(request))
-            for route in ["", "strategies", "watch", "news", "settings", "help", "risk", "lab", "workshop"]:
+            for route in ["", "strategies", "watch", "journal", "news", "settings", "help", "risk", "lab", "workshop"]:
                 page.goto(base + "/#/" + route, wait_until="networkidle")
                 page.wait_for_function("S.data?.ready")
                 assert len(page.locator("#main").inner_text()) > 30, route
@@ -118,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             public_before_revision = digest(site / "data/results.json")
             page.goto(base + "/#/lab", wait_until="networkidle")
             page.locator('[data-lab-filter="revised"]').click()
-            assert page.locator('[data-lab-sel]').count() == 9
+            assert page.locator('[data-lab-sel]').count() == 11
             page.locator('[data-trading-style="swing"]').click()
             assert page.locator('[data-lab-sel]').count() == 22
             page.locator('[data-lab="select-none"]').click()
@@ -197,7 +208,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert request("/api/puls.php", b'{"action":"check"}')[0] == 403
             assert request("/api/save.php")[0] == 405
             assert request("/api/cron.php")[0] == 403
-            for protected in ["config.php", "config.local.php", "config.example.php", "lib.php", "workspace.php", "puls-lib.php"]:
+            for protected in ["config.php", "config.local.php", "config.example.php", "lib.php", "workspace.php", "puls-lib.php", "maintenance.php"]:
                 assert request("/api/" + protected)[0] == 403, protected
             # При обновяване с копиране стари файлове могат да останат на хостинга.
             for retired in ["news-ai.php", "risk-ai.php", "gemini-check.php"]:
@@ -284,7 +295,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             }""")
             assert page.evaluate('mySignals().map(s=>s.pair)') == ['USDJPY','XAUUSD']
             assert '1 текущи модела са скрити' in page.locator('#main').inner_text()
-            assert 'Непълна архивна проверка' in page.locator('#main').inner_text()
+            assert 'Силна за USD/JPY' in page.locator('#main').inner_text()
             page.evaluate("S.watch.add(S.data.signals[0]); render();")
             assert page.evaluate('mySignals().length') == 3, "Followed signal remains available after exclusion by instrument"
             page.evaluate("S.watch.ingest([{...S.data.signals[0],status:'cancelled',reason:'expired',exit_time:Date.now()/1000}]);")
@@ -297,9 +308,158 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert not page.evaluate("JSON.parse(localStorage.getItem(STORE_KEY)).smartPairs")
             page.evaluate("location.hash='#/strategy/lib_ema_20_50_200-D1';render();")
             assert page.locator('.pair-review-table').count() == 1
-            assert "Непълна архивна проверка" in page.locator('.pair-review-table').inner_text()
+            assert "Силна" in page.locator('.pair-review-table').inner_text()
             assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), "Pair review overflows mobile viewport"
             print("OK: user's instrument table, default selection, explanatory labels, followed-signal updates, settings persistence and mobile pair table")
+            page.set_viewport_size({"width": 1440, "height": 1000})
+            page.goto(base + "/#/lab", wait_until="networkidle")
+            if page.locator("#lab-pass").count():
+                page.locator("#lab-pass").fill("local-browser-test-only")
+                page.get_by_role("button", name="Влез", exact=True).click()
+            page.wait_for_function("LAB.authed")
+            page.locator('[data-trading-style="day"]').click()
+            page.locator('[data-lab-filter="new"]').click()
+            assert page.locator('[data-lab-sel]').count() == 5
+            page.locator('[data-trading-style="swing"]').click()
+            assert page.locator('[data-lab-sel]').count() == 5
+            open_maintenance()
+            page.locator('[name="EURUSD.commission"]').fill("0.5")
+            page.get_by_role("button", name="Запази разходите", exact=True).click()
+            page.wait_for_function("!LAB.maintenanceBusy && S.costProfile.pairs.EURUSD.commission === 0.5")
+            assert json.loads((site / "data/costs.json").read_text())["pairs"]["EURUSD"]["commission"] == 0.5
+            assert page.evaluate("strategies().some(entry => entry.costs_outdated)"), "Existing results retain their original cost assumptions"
+            assert list((site / "data/private/backups").glob("*.json"))
+            open_maintenance()
+            page.locator('[data-maintenance="installation"]').click()
+            page.wait_for_function("!LAB.maintenanceBusy && !!LAB.installation")
+            assert page.evaluate("LAB.installation.ok"), page.evaluate("LAB.installation.files.filter(row => row.state !== 'ok')")
+            with page.expect_download() as downloaded:
+                page.locator('[data-maintenance="backup"]').click()
+            backup_bytes = Path(downloaded.value.path()).read_bytes()
+            backup = json.loads(backup_bytes)
+            assert backup["format"] == "tradepulse24-server-backup"
+            assert set(backup["files"]).issubset({"results.json", "custom.json", "costs.json", "private/workspace.json"})
+            assert b"local-browser-test-only" not in backup_bytes
+            page.wait_for_function("!LAB.maintenanceBusy")
+            page.locator('[name="EURUSD.commission"]').fill("1")
+            page.get_by_role("button", name="Запази разходите", exact=True).click()
+            page.wait_for_function("!LAB.maintenanceBusy && S.costProfile.pairs.EURUSD.commission === 1")
+            open_maintenance()
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.locator("#server-backup-import").set_input_files({"name": "backup.json", "mimeType": "application/json", "buffer": backup_bytes})
+            page.wait_for_function("!LAB.maintenanceBusy && S.costProfile.pairs.EURUSD.commission === 0.5")
+            assert request("/api/maintenance.php")[0] == 403
+            assert request("/data/private/backups/anything.json")[0] == 403
+            with urllib.request.urlopen(base + "/api/state.php") as response:
+                etag = response.headers["ETag"]
+                assert json.loads(response.read())["release"] == "4.5"
+            try:
+                urllib.request.urlopen(urllib.request.Request(base + "/api/state.php", headers={"If-None-Match": etag}))
+                raise AssertionError("Expected a conditional response")
+            except urllib.error.HTTPError as response:
+                assert response.code == 304 and not response.read()
+            print("OK: ten candidates by style, persisted costs, stale cost labels, private backup/restore, release files and conditional 304")
+
+            page.evaluate("""() => {
+              const t=Date.now()/1000;
+              S.settings.style='day'; S.settings.balance=4000; S.settings.risk=0.5; S.settings.currency='USD';
+              const sig={id:'personal-demo-EURUSD-1',strategy:'lib_ema_9_21-H1',strategy_name:'Пример за дневника',pair:'EURUSD',pair_name:'EUR/USD',tf:'H1',tf_label:'1 час',style:'day',status:'pending',signal_time:t-600,valid_until:t+3600,orders:[{type:'stop',dir:1,entry:1.1,stop:1.098,targets:[{w:1,level:null}]}]};
+              S.data.signals.push(sig); location.hash='#/signal/'+sig.id;render();
+            }""")
+            page.get_by_role("button", name="Запиши покупка", exact=True).click()
+            page.locator('#journal-form [name="lots"]').fill("0.1")
+            page.locator('#journal-form [name="entry_price"]').fill("1.1")
+            page.locator('#journal-form [name="initial_stop"]').fill("1.098")
+            page.locator('#journal-form [name="risk"]').fill("20")
+            page.locator('#journal-form [name="risk_pct"]').fill("0.5")
+            page.locator('#journal-form details').click()
+            page.locator('#journal-form [name="partial_at"]').fill(page.evaluate("journalInputDate(Date.now()/1000)"))
+            page.locator('#journal-form [name="partial_lots"]').fill("0.04")
+            page.locator('#journal-form [name="partial_price"]').fill("1.102")
+            page.locator('#journal-form [name="partial_net"]').fill("5")
+            page.get_by_role("button", name="Запази сделката", exact=True).click()
+            page.wait_for_function("JOURNAL.trades.length === 2")
+            position_id = page.evaluate("JOURNAL.trades.find(t=>t.signal_id==='personal-demo-EURUSD-1').id")
+            assert abs(page.evaluate("RiskJournal.stats(journalTrades()).openRisk") - 0.3) < 1e-8
+            page.reload(wait_until="networkidle")
+            page.locator(f'[data-journal-edit="{position_id}"]').click()
+            assert page.locator('#journal-form [name="lots"]').input_value() == "0.1"
+            page.locator('#journal-form [name="status"]').select_option("closed")
+            page.locator('#journal-form [name="net"]').fill("-5")
+            page.get_by_role("button", name="Запази сделката", exact=True).click()
+            page.wait_for_function("(id)=>JOURNAL.trades.find(t=>t.id===id).status==='closed'", arg=position_id)
+            assert abs(page.evaluate("RiskJournal.stats(journalTrades()).daily") - 0.75) < 1e-8
+            assert page.evaluate("RiskJournal.stats(journalTrades()).openRisk") == 0
+            print("OK: signal-linked personal entry, persisted partial exit, remaining exposure and gross daily losses without double counting")
+
+            page.evaluate("""() => {
+              const t=Date.now()/1000;
+              const sig={id:'observed-demo-EURUSD-1',strategy:'lib_ema_9_21-H1',strategy_name:'Наблюдаван пример',version:1,cost_model:FX.costs.fingerprint(S.costProfile),pair:'EURUSD',pair_name:'EUR/USD',tf:'H1',tf_label:'1 час',style:'day',status:'pending',signal_time:t-60,valid_until:t+3600,orders:[{type:'stop',dir:1,entry:1.1,stop:1.098,targets:[{w:1,level:null}]}]};
+              S.observed.ingest([sig],t-30,()=>true);
+              S.observed.ingest([{...sig,status:'closed',dir:1,fill_price:1.1,stop0:1.098,fill_time:t-20,exit_time:t-10,r:1.25,reason:'signal'}],t,()=>true);
+              location.hash='#/journal'; render();
+            }""")
+            assert page.evaluate("S.observed.records['observed-demo-EURUSD-1'].initial.status") == "pending"
+            assert page.evaluate("S.observed.records['observed-demo-EURUSD-1'].latest.r") == 1.25
+            assert page.evaluate("S.observed.summary('day').closed") >= 1
+            assert "Наблюдаван пример" in page.locator("#main").inner_text()
+            with page.expect_download() as observed_download:
+                page.locator('[data-observed-export]').click()
+            observed_bytes = Path(observed_download.value.path()).read_bytes()
+            count_before_import = page.evaluate("S.observed.list().length")
+            page.locator('#observed-import').set_input_files({"name": "signals.json", "mimeType": "application/json", "buffer": observed_bytes})
+            assert page.evaluate("S.observed.list().length") == count_before_import
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Observed journal overflows mobile viewport"
+            print("OK: immutable first observation, later outcome, journal export/import and mobile table")
+
+            page.evaluate("""() => {
+              const t=Date.now()/1000;
+              S.settings.style='day';S.settings.smartPairs=false;S.settings.followed=['lib_ema_9_21-H1','test_previous_day-M15','lib_ema_9_21-H4'];
+              S.data.market.open=true;S.meta=S.meta||{};S.meta.quotes=S.meta.quotes||{};S.meta.quotes.EURUSD={price:1.095,time:t};S.data.pairs.EURUSD.price=1.095;
+              const sig={id:'group-a',strategy:'lib_ema_9_21-H1',strategy_name:'Група A',version:1,pair:'EURUSD',pair_name:'EUR/USD',tf:'H1',tf_label:'1 час',style:'day',status:'pending',signal_time:t-600,valid_until:t+3600,orders:[{type:'stop',dir:1,entry:1.1,stop:1.09,targets:[{w:1,level:null}]}]};
+              S.data.signals=[sig,{...sig,id:'group-b',strategy:'test_previous_day-M15',tf:'M15',tf_label:'15 минути',strategy_name:'Група B'},{...sig,id:'group-swing',strategy:'lib_ema_9_21-H4',tf:'H4',tf_label:'4 часа',style:'swing',orders:[{type:'stop',dir:-1,entry:1.09,stop:1.1,targets:[{w:1,level:null}]}]}];
+              location.hash='#/signals';render();
+            }""")
+            assert page.locator('.signal-group').count() == 1
+            assert "2 варианта" in page.locator('.signal-group summary').inner_text()
+            assert "Посоките се разминават" in page.locator('#main').inner_text()
+            page.locator('.signal-group summary').click()
+            assert page.locator('.signal-group .sig-card').count() == 2
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Grouped signals overflow mobile viewport"
+            page.evaluate("""() => {
+              window.testNotices=[];
+              Object.defineProperty(window,'Notification',{configurable:true,value:class {
+                static permission='granted';static requestPermission(){return Promise.resolve('granted');}
+                constructor(title,options){window.testNotices.push({title,options});} close(){}
+              }});
+              S.settings.notifications=true;SignalNotices.seen.clear();SignalNotices.ready=false;
+              SignalNotices.ingest([S.data.signals[0]]);
+              if(window.testNotices.length)throw new Error('Initial load cannot send notices');
+              SignalNotices.ingest(S.data.signals.slice(0,2));SignalNotices.ingest(S.data.signals.slice(0,2));
+            }""")
+            assert page.evaluate("window.testNotices.length") == 1
+            assert not errors, errors
+            print("OK: grouped levels, opposed day/swing directions and one notification for a newly observed group")
+            recovery_prices = {}
+            for tf in ["M15", "H1", "D1"]:
+                recovery_prices[tf] = json.loads((site / f"data/prices/EURUSD_{tf}.json").read_text())["bars"][-600:]
+            (site / "data/recent.json").write_text(json.dumps({"prices": {"EURUSD": recovery_prices}}))
+            (site / "data/meta.json").write_text(json.dumps({"prices_updated": int(time.time()), "quotes": {"EURUSD": {"price": recovery_prices["H1"][-1][4], "time": int(time.time())}}, "launch": 0, "refresh_minutes": 20}))
+            recovery = page.evaluate("""async () => {
+              const prices={EURUSD:{}};
+              for(const tf of ['M15','H1','D1']) prices.EURUSD[tf]=(await getJSON('data/prices/EURUSD_'+tf+'.json',null)).bars;
+              const engine=new FX.Engine(prices,{}, {costs:S.costProfile}).build(Date.now()/1000), strat=FX.CODED.find(s=>s.key==='fake2b');
+              const trade=engine.trades(strat,'H4').trades.find(t=>t.status==='closed'&&t.exit_time<Date.now()/1000-40*86400);
+              engine.keepIds.add(trade.id); const signal=engine.signals(strat,'H4',[trade])[0], snapshot={...signal,status:'open'};
+              delete snapshot.r;delete snapshot.exit_time;delete snapshot.reason;
+              S.watch.add(snapshot);S.settings.followed=[];await load();
+              return {id:signal.id,expected:signal.r,actual:S.watch.get(signal.id).snapshot.r,status:S.watch.get(signal.id).snapshot.status};
+            }""")
+            assert recovery["status"] == "closed" and recovery["actual"] == recovery["expected"], recovery
+            assert page.evaluate("S.data.signals.filter(sig=>sig.strategy==='fake2b-H4').every(sig=>S.watch.has(sig.id))"), "Retired models update tracked IDs without new discoveries"
+            assert not errors, errors
+            print("OK: a tracked archived model outside recent data recovers its actual historical close")
             broken = browser.new_page()
             broken.route("**/assets/js/fx-core.js*", lambda route: route.abort())
             broken.goto(base + "/#/", wait_until="networkidle")

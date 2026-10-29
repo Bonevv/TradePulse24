@@ -3,7 +3,7 @@
 // Каталог, сигнали и лични настройки. Цените и новините идват от JSON файловете.
 
 const STORE_KEY = "logo-signals-settings-v1";
-const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null, smartPairs: true };
+const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null, smartPairs: true, notifications: false };
 const MY_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CHF", "CAD", "NZD"];
 const CURRENCY_NAMES = { USD: "САЩ", EUR: "Еврозона", GBP: "Великобритания", JPY: "Япония", AUD: "Австралия", CHF: "Швейцария", CAD: "Канада", NZD: "Нова Зеландия", CNY: "Китай", ALL: "Всички" };
 const STYLE_NAMES = { day: "Дневна", swing: "Суинг" };
@@ -29,6 +29,7 @@ const S = {
   showAll: false,
   pairQuery: "",
   stratFilter: "all",
+  stratPair: "",
   newsMine: true,
   newsImpact: "hm",
   newsDay: "today",
@@ -36,6 +37,7 @@ const S = {
   charts: {},
   timer: null,
   watch: new FXWatch.WatchStore(),
+  observed: new FXObserved.Store(),
 };
 
 /* ------------------------------------------------------------ настройки */
@@ -57,6 +59,7 @@ function clean(s) {
   s.style = ["day", "swing"].includes(s.style) ? s.style : "day";
   s.followed = Array.isArray(s.followed) ? s.followed.filter((x) => typeof x === "string") : null;
   s.smartPairs = s.smartPairs !== false;
+  s.notifications = s.notifications === true;
   return s;
 }
 
@@ -69,14 +72,14 @@ function saveSettings() {
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const now = () => Date.now() / 1000;
-const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Sofia"; } catch (_e) { return "Europe/Sofia"; } })();
+const TZ = "Europe/Sofia";
 const F = {
-  dayTime: new Intl.DateTimeFormat("bg-BG", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
-  time: new Intl.DateTimeFormat("bg-BG", { hour: "2-digit", minute: "2-digit" }),
-  date: new Intl.DateTimeFormat("bg-BG", { day: "2-digit", month: "2-digit", year: "numeric" }),
-  dayLong: new Intl.DateTimeFormat("bg-BG", { weekday: "long", day: "numeric", month: "long" }),
-  monthYear: new Intl.DateTimeFormat("bg-BG", { month: "short", year: "numeric" }),
-  dayMonth: new Intl.DateTimeFormat("bg-BG", { day: "numeric", month: "short" }),
+  dayTime: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+  time: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }),
+  date: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, day: "2-digit", month: "2-digit", year: "numeric" }),
+  dayLong: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" }),
+  monthYear: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, month: "short", year: "numeric" }),
+  dayMonth: new Intl.DateTimeFormat("bg-BG", { timeZone: TZ, day: "numeric", month: "short" }),
   num: (d) => new Intl.NumberFormat("bg-BG", { minimumFractionDigits: d, maximumFractionDigits: d }),
 };
 const when = (ts) => F.dayTime.format(new Date(ts * 1000));
@@ -120,7 +123,7 @@ const strategies = () => S.data?.strategies || [];
 const stratById = (id) => strategies().find((s) => s.id === id);
 const isCurrent = (sig) => sig.status === "pending" || sig.status === "open";
 const watched = (id) => S.watch.has(id);
-const resolveSignal = (id) => (S.data?.signals || []).find((s) => s.id === id) || S.watch.get(id)?.snapshot || null;
+const resolveSignal = (id) => (S.data?.signals || []).find((s) => s.id === id) || S.watch.get(id)?.snapshot || S.observed.records[id]?.latest || null;
 function quoteFresh(pair) {
   if (!S.data?.market?.open) return true;
   const quoteTime = Number(S.meta?.quotes?.[pair]?.time);
@@ -135,15 +138,51 @@ function watchButton(sig, extra = "") {
   return `<button type="button" class="follow-btn watch-btn ${on ? "on" : ""} ${extra}" data-watch="${esc(sig.id)}" aria-pressed="${on}">${on ? "✓ Следиш сигнала" : "◎ Следи сигнала"}</button>`;
 }
 
-function sortedStrategies() {
+/* Оценка по двойка. Общата оценка смесва всички инструменти: стратегия може да е „Силна“ за
+   златото и „Не работи“ за EUR/USD. Затова картите, сигналите и филтрите гледат конкретната двойка. */
+const pairRow = (e, pair) => (e?.per_pair || []).find((p) => p.pair === pair) || null;
+const pairVerdict = (e, pair) => FX.rowVerdict(pairRow(e, pair));
+const strongPairs = (e) => (e?.per_pair || []).filter((p) => FX.rowVerdict(p) === "good");
+/** Най-добрата оценка сред двойките; без данни по двойки - общата. */
+function bestVerdict(e) {
+  const rows = e.per_pair || [];
+  if (!rows.length) return e.stats.verdict;
+  return rows.map(FX.rowVerdict).sort((a, b) => VERDICT_ORDER[a] - VERDICT_ORDER[b])[0];
+}
+/** Редът на двойката, която стои зад най-добрата оценка. */
+function bestPairRow(e) {
+  const v = bestVerdict(e), rows = (e.per_pair || []).filter((p) => FX.rowVerdict(p) === v);
+  return rows.sort((a, b) => (b.avg_r ?? -9) - (a.avg_r ?? -9))[0] || null;
+}
+const ratingOf = (e, pair = "") => (pair ? pairVerdict(e, pair) : bestVerdict(e));
+const ratingAvg = (e, pair = "") => (pair ? pairRow(e, pair)?.avg_r : bestPairRow(e)?.avg_r ?? e.stats.avg_r) ?? -9;
+const PAIR_PILL_TIP = (p, v) => `${p.name}: ${FX.VERDICT_LABELS[v]} · ${p.trades} сделки · средно ${p.avg_r == null ? "—" : fmtR(p.avg_r)} на сделка`;
+function pairBadge(e, pair) {
+  const v = pairVerdict(e, pair);
+  return `<span class="verdict v-${esc(v)}" title="${esc(FX.PAIR_VERDICT_REASON[v])}">${FX.VERDICT_LABELS[v]} за ${esc(pairInfo(pair).name)}</span>`;
+}
+/** Главният етикет на картата: за кои двойки е „Силна“, иначе най-добрата оценка по двойки. */
+function headlineBadge(e) {
+  const strong = strongPairs(e);
+  if (strong.length) return `<span class="verdict v-good" title="${esc(FX.PAIR_VERDICT_REASON.good)}">Силна за ${strong.length === 1 ? esc(strong[0].name) : `${strong.length} двойки`}</span>`;
+  const v = bestVerdict(e);
+  return `<span class="verdict v-${esc(v)}" title="Най-добрата оценка сред двойките. ${esc(FX.PAIR_VERDICT_REASON[v] || "")}">${FX.VERDICT_LABELS[v] || "Няма оценка"}</span>`;
+}
+function pairStrip(e) {
+  const rows = e.per_pair || [];
+  if (!rows.length) return "";
+  return `<div class="pair-strip" role="list" aria-label="Оценка по двойки">${rows.map((p) => { const v = FX.rowVerdict(p); return `<span role="listitem" class="pair-pill v-${esc(v)}" title="${esc(PAIR_PILL_TIP(p, v))}">${esc(p.name)}</span>`; }).join("")}</div>`;
+}
+
+function sortedStrategies(pair = "") {
   return [...strategies()].sort((a, b) =>
-    (VERDICT_ORDER[a.stats.verdict] - VERDICT_ORDER[b.stats.verdict]) || ((b.stats.avg_r ?? -9) - (a.stats.avg_r ?? -9)));
+    (VERDICT_ORDER[ratingOf(a, pair)] - VERDICT_ORDER[ratingOf(b, pair)]) || (ratingAvg(b, pair) - ratingAvg(a, pair)));
 }
 
 function defaultFollowed() {
   return defaultsForEntries(strategies());
 }
-const defaultsForEntries = (entries) => entries.filter((e) => e.stats.verdict === "good" || e.pair_review && e.per_pair.some((p) => FX.pairChoice(e, p.pair, now()).allowed)).map((e) => e.id);
+const defaultsForEntries = (entries) => entries.filter((e) => !e.retired && (e.stats.verdict === "good" || (e.per_pair || []).some((p) => FX.pairChoice(e, p.pair, now()).allowed))).map((e) => e.id);
 const followedIds = () => S.settings.followed ?? defaultFollowed();
 const isFollowed = (id) => followedIds().includes(id);
 const styleOk = (style) => S.settings.style === style;
@@ -154,18 +193,27 @@ function mySignals({ all = false } = {}) {
 }
 const signalPairChoice = (sig) => FX.pairChoice(stratById(sig.strategy), sig.pair, now());
 function pairSignalVisible(sig) {
+  if (sig.retired && !watched(sig.id)) return false;
   return !S.settings.smartPairs || !isCurrent(sig) || watched(sig.id) || signalPairChoice(sig).allowed;
 }
 function pairChoiceText(entry) {
-  const names = (entry.per_pair || []).filter((p) => FX.pairChoice(entry, p.pair, now()).allowed).map((p) => p.name);
-  return names.length ? `Подбор по инструменти: ${names.join(", ")}.` : "Няма инструмент, който да покрива текущия подбор. Пусни пълен тест от Лабораторията.";
+  const names = strongPairs(entry).map((p) => p.name);
+  const overall = `Общо за всички двойки: ${FX.VERDICT_LABELS[entry.stats.verdict] || "няма оценка"}.`;
+  return names.length ? `Силна за: ${names.join(", ")}. ${overall}` : `Няма двойка с оценка „Силна“. ${overall}`;
 }
 function pairTable(entry) {
   const r = (v) => Number.isFinite(v) ? fmtR(v) : "—";
-  return `<p class="what">${esc(pairChoiceText(entry))} Оценката е за тази стратегия, графика и инструмент. Печелившият процент сам по себе си не определя избора. Пълен нов тест от Лабораторията добавя проверката 70/30 и разходите.</p>
-    <div class="table-wrap"><table class="data pair-review-table"><thead><tr><th>Двойка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Общо</th><th>Подбор</th><th class="num">Последни 30%</th><th class="num">Двоен разход</th></tr></thead><tbody>
-    ${entry.per_pair.map((p) => { const choice = FX.pairChoice(entry, p.pair, now()); return `<tr><td>${esc(p.name)}</td><td class="num">${p.trades}</td><td class="num">${p.win_rate == null ? "—" : F.num(0).format(p.win_rate) + "%"}</td><td class="num ${p.avg_r >= 0 ? "pos" : "neg"}">${r(p.avg_r)}</td><td class="num">${r(p.total_r)}</td>
-      <td><details><summary class="${choice.allowed ? "pos" : "muted"}">${esc(choice.label)}</summary><p class="what">${esc(choice.reason)}</p>${p.review?.years ? `<p class="what">${p.review.years.map((y) => `${y.year}: ${y.trades} / ${r(y.avg_r)}`).join(" · ")}</p>` : ""}</details></td><td class="num">${p.review ? `${p.review.holdout.trades} / ${r(p.review.holdout.avg_r)}` : "—"}</td><td class="num">${r(p.review?.stress.avg_r)}</td></tr>`; }).join("")}</tbody></table></div>`;
+  const rows = [...entry.per_pair].sort((a, b) => (VERDICT_ORDER[FX.rowVerdict(a)] - VERDICT_ORDER[FX.rowVerdict(b)]) || ((b.avg_r ?? -9) - (a.avg_r ?? -9)));
+  return `<p class="what">${esc(pairChoiceText(entry))} Всяка двойка се оценява само по своите сделки. Процентът печеливши сам по себе си не решава оценката.</p>
+    <div class="table-wrap"><table class="data pair-review-table"><thead><tr><th>Двойка</th><th>Оценка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Печалба ÷ загуба</th><th class="num">Общо</th><th class="num">Последни 30%</th><th class="num">Двоен спред</th></tr></thead><tbody>
+    ${rows.map((p) => {
+      const v = FX.rowVerdict(p), ho = p.holdout || (p.review ? [p.review.holdout.trades, p.review.holdout.avg_r] : null), stress = p.stress_r ?? p.review?.stress.avg_r;
+      const years = p.review?.years ? `<p class="what">${p.review.years.map((y) => `${y.year}: ${y.trades} / ${r(y.avg_r)}`).join(" · ")}</p>` : "";
+      const pf = p.profit_factor == null ? (p.trades ? "∞" : "—") : F.num(2).format(p.profit_factor);
+      return `<tr><td>${esc(p.name)}</td><td><details><summary><span class="verdict v-${esc(v)}">${FX.VERDICT_LABELS[v]}</span></summary><p class="what">${esc(FX.PAIR_VERDICT_REASON[v])}</p>${years}</details></td>
+        <td class="num">${p.trades}</td><td class="num">${p.win_rate == null ? "—" : F.num(0).format(p.win_rate) + "%"}</td><td class="num ${p.avg_r >= 0 ? "pos" : "neg"}">${r(p.avg_r)}</td><td class="num">${pf}</td><td class="num">${r(p.total_r)}</td>
+        <td class="num">${ho ? `${ho[0]} / ${r(ho[1])}` : "—"}</td><td class="num">${r(stress)}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
 }
 
 function pairCurrencies(pair) { return [pair.slice(0, 3), pair.slice(3, 6)]; }
@@ -256,7 +304,7 @@ function sizing(pair, order) {
   const tp1Pips = order.tp1 != null ? pips(pair, order.entry, order.tp1) : null;
   const tp2Pips = order.tp2 != null ? pips(pair, order.entry, order.tp2) : null;
   const pv = pipValue(pair);
-  const spread = info.spread;
+  const spread = info.spread + (info.costs?.commission || 0) + (info.costs?.slippage || 0);
   if (!Number.isFinite(pv) || pv <= 0 || !Number.isFinite(spread) || spread < 0) return { invalid: true, tooSmall: true, stopPips };
   const lots = Math.floor((rm / ((stopPips + spread) * pv)) * 100 + 1e-9) / 100;
   const res = { rm, stopPips, tp1Pips, tp2Pips, pv, spread, lots, parts: partsOf(order) };
@@ -294,7 +342,7 @@ function statusInfo(sig) {
     : { cls: "st-pending", label: "Чака вход", text: `По модела входното ниво не е достигнато. Поръчката важи до ${when(sig.valid_until)}.` };
   if (sig.status === "open" && sig.half) return { cls: "st-open", label: "Цел 1 ✓", text: "Цел 1 е достигната по модела и част от позицията е затворена. Остава риск от спред, гап или неизпълнение на стопа." };
   if (sig.status === "open" && sig.stop != null && sig.fill_price != null && (sig.stop - sig.fill_price) * sig.dir >= 0) return { cls: "st-open", label: "Стоп при входа", text: `Моделът отчита вход ${px(sig.pair, sig.fill_price)} и стоп ${px(sig.pair, sig.stop)}. Реалният риск не е нула заради спред и възможен гап.` };
-  if (sig.status === "open") return { cls: "st-open", label: "Активна по модела", text: `По ценовите данни входът е достигнат на ${px(sig.pair, sig.fill_price)} (${when(sig.fill_time)}). Това НЕ означава, че си влязъл при брокера.` };
+  if (sig.status === "open") return { cls: "st-open", label: "Активна по модела", text: `По ценовите данни входът е достигнат на ${px(sig.pair, sig.fill_price)} (${when(sig.fill_time)}). Изпълнението на твоята поръчка се потвърждава при брокера.` };
   if (sig.status === "cancelled") {
     return sig.reason === "void"
       ? { cls: "st-muted", label: "Отпадна", text: "Цената стигна стопа преди входа, затова сигналът отпадна без сделка." }
@@ -327,7 +375,7 @@ function targetCells(o, sig = null) {
   const prices = Array.isArray(targets) && targets.length
     ? targets.map((p) => (Number.isFinite(p.level) ? p.level : Number.isFinite(p.tp) ? p.tp : null))
     : [o.tp1 ?? null, o.tp2 ?? null];
-  if (planned?.length === prices.length) {
+  if (planned?.length === prices.length && !S.catalog?.[key]?.fixed_target) {
     for (let i = 0; i < prices.length; i++) {
       if (!(Number.isFinite(planned[i][1]) && planned[i][1] > 0)) prices[i] = null;
     }
@@ -361,10 +409,13 @@ function signalCard(sig) {
     ? (sig.status === "pending" ? `Важи до <strong>${when(sig.valid_until)}</strong>` : `Отворена ${when(sig.fill_time)}`)
     : `Сигнал от ${when(sig.signal_time)}`;
   if (!isCurrent(sig)) sizeText = `<span>Резултат: <strong class="${sig.r > 0 ? "pos" : sig.r < 0 ? "neg" : ""}">${sig.r != null ? `${fmtR(sig.r)} (${rMoney(sig.r)})` : "без сделка"}</strong></span>`;
+  const choice = signalPairChoice(sig);
+  const choiceNote = choice.allowed ? "" : choice.status === "stale" ? `Нужен нов тест за ${sig.pair_name}.` : `Провери оценката за ${sig.pair_name}.`;
   return `<article class="sig-card ${isCurrent(sig) ? "" : "closed"}">
     <a class="sig-card-main" href="#/signal/${encodeURIComponent(sig.id)}"><div class="sig-head"><div class="sig-title">${dirBadge(sig)}<h3>${esc(sig.pair_name)}</h3></div><span class="st ${st.cls}">${esc(st.label)}</span></div>
-    <div class="sig-sub">${esc(sig.strategy_name)} · ${esc(sig.tf_label)} · ${STYLE_NAMES[sig.style]} ${strat ? verdictBadge(strat.stats) : ""}</div>
-    <p class="what">${esc(signalPairChoice(sig).label)} за ${esc(sig.pair_name)}.</p>
+    <div class="sig-sub">${esc(sig.strategy_name)} · ${esc(sig.tf_label)} · ${STYLE_NAMES[sig.style]} ${strat ? pairBadge(strat, sig.pair) : ""}</div>
+    ${choiceNote ? `<p class="what">${esc(choiceNote)}</p>` : ""}
+    ${signalAvailability(sig)}
     ${body}
     ${news ? `<div class="warn-line">⚠ Силна новина за ${esc(news.currency)} ${rel(news.time)}: ${esc(news.title_bg)}</div>` : ""}
     ${freshnessNotice(sig)}
@@ -392,7 +443,13 @@ function sparkline(curve, h = 54) {
 /** Стратегиите от книгите следват общите правила (две цели, стоп на входа). Останалите имат свои правила за изход. */
 const ownExit = (strat) => !!strat && strat.origin !== "book";
 function approximationTag(e) {
-  return e.approx ? `<span class="tag tag-approx" title="Стратегията е реализирана по публично описание, без проверен пълен алгоритъм.">приблизителни правила</span>` : "";
+  return `${e.provisional ? '<span class="tag tag-approx" title="Нужна е проверка с неизползвани данни или проследяване занапред.">За тест</span>' : ""} ${e.approx ? '<span class="tag tag-approx" title="Собствена адаптация по публични правила. Резултатите са за описаната тук реализация.">адаптация</span>' : ""}`;
+}
+
+function strategyFollowButton(entry, detail = false) {
+  if (entry.retired) return '<span class="tag">Архив · запазени правила за проследяване</span>';
+  const followed = isFollowed(entry.id);
+  return `<button type="button" class="follow-btn ${followed ? "on" : ""}" data-follow="${esc(entry.id)}">${followed ? "✓ Следвам" : "+ Следвай"}${detail ? " тази стратегия" : ""}</button>`;
 }
 
 function pairsLabel(e) {
@@ -401,25 +458,33 @@ function pairsLabel(e) {
   return e.pairs.map((p) => pairInfo(p).name).join(", ");
 }
 
-function stratCard(e) {
-  const s = e.stats;
+function stratCard(e, chosen = "") {
+  // Числата на картата са за избраната двойка, а без избор - за двойката с най-добра оценка.
+  const s = e.stats, pair = chosen || bestPairRow(e)?.pair || "", row = pair ? pairRow(e, pair) : null;
   const followed = isFollowed(e.id);
   const rm = riskMoney();
-  const stats = s.trades ? `<div class="stat-mini">
-      <div><span>Печеливши</span><strong>${F.num(0).format(s.win_rate)}%</strong></div>
-      <div><span>Среден резултат</span><strong class="${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</strong></div>
-      <div><span>Най-голям спад*</span><strong>${pct(-s.max_dd_r * S.settings.risk)}</strong></div>
-      <div><span>Загуби подред</span><strong>${s.max_losing_streak}</strong></div></div>` : `<p class="muted" style="font-size:12px;margin-top:12px">Още няма сделки в теста.</p>`;
+  const shown = pair ? row || { trades: 0 } : s;
+  const stats = shown.trades ? `<div class="stat-mini">
+      <div><span>Печеливши</span><strong>${F.num(0).format(shown.win_rate)}%</strong></div>
+      <div><span>Среден резултат</span><strong class="${shown.avg_r > 0 ? "pos" : "neg"}">${fmtR(shown.avg_r)}</strong></div>
+      <div><span>Най-голям спад*</span><strong>${pct(-shown.max_dd_r * S.settings.risk)}</strong></div>
+      ${pair ? `<div><span>Сделки</span><strong>${shown.trades}</strong></div>` : `<div><span>Загуби подред</span><strong>${s.max_losing_streak}</strong></div>`}</div>`
+    : `<p class="muted" style="font-size:12px;margin-top:12px">${pair ? `Няма сделки на ${esc(pairInfo(pair).name)} в теста.` : "Още няма сделки в теста."}</p>`;
+  const foot = pair
+    ? `${shown.trades} сделки на ${esc(pairInfo(pair).name)} · общо ${s.trades} за всички двойки${rm && shown.trades ? ` · средно ${rMoney(shown.avg_r)} на сделка` : ""}`
+    : `${s.trades} сделки · ~${F.num(1).format(s.per_month || 0)} на месец · ${s.trades ? `${F.monthYear.format(new Date(s.start * 1000))} – ${F.monthYear.format(new Date(s.end * 1000))}` : ""}${rm && s.trades ? ` · средно ${rMoney(s.avg_r)} на сделка` : ""}`;
   return `<article class="strat-card ${followed ? "followed" : ""}">
     <div class="strat-top"><div><h3><a class="link" style="color:inherit" href="#/strategy/${esc(e.id)}">${esc(e.name)}</a></h3>
-      <div class="strat-meta">${esc(e.tf_label)} · ${STYLE_NAMES[e.style]} · ${pairsLabel(e)} ${approximationTag(e)}</div></div>${verdictBadge(s)}</div>
+      <div class="strat-meta">${esc(e.tf_label)} · ${STYLE_NAMES[e.style]} · ${pairsLabel(e)} ${approximationTag(e)}</div></div>${chosen ? pairBadge(e, chosen) : headlineBadge(e)}</div>
     <p class="strat-short">${esc(e.short)}</p>
+    ${pairStrip(e)}
     <p class="what">${esc(pairChoiceText(e))}</p>
-    ${sparkline(s.curve)}
+    ${pair ? `<p class="kicker" style="margin-top:10px">${chosen ? "" : "НАЙ-ДОБРА ДВОЙКА · "}${esc(pairInfo(pair).name)}</p>` : ""}
+    ${sparkline(pair ? row?.curve : s.curve)}
     ${stats}
-    <div class="strat-foot"><small>${s.trades} сделки · ~${F.num(1).format(s.per_month || 0)} на месец · ${s.trades ? `${F.monthYear.format(new Date(s.start * 1000))} – ${F.monthYear.format(new Date(s.end * 1000))}` : ""}${rm && s.trades ? ` · средно ${rMoney(s.avg_r)} на сделка` : ""}</small>
+    <div class="strat-foot"><small>${foot}</small>
       <span class="chips-row"><a class="btn btn-quiet btn-sm" href="#/strategy/${esc(e.id)}">Подробно</a>
-      <button type="button" class="follow-btn ${followed ? "on" : ""}" data-follow="${esc(e.id)}">${followed ? "✓ Следвам" : "+ Следвай"}</button></span></div>
+      ${strategyFollowButton(e)}</span></div>
   </article>`;
 }
 
@@ -636,7 +701,11 @@ function viewDashboard() {
   const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
   const highToday = newsFor(MY_CURRENCIES, now(), todayEnd.getTime() / 1000, ["high"]).length;
   const upcoming = newsFor(MY_CURRENCIES, now() - 30 * 60, now() + 48 * 3600, ["high"]).slice(0, 6);
-  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => s.stats.verdict === "good" || s.stats.verdict === "weak").slice(0, 3);
+  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => bestVerdict(s) === "good" || bestVerdict(s) === "weak").slice(0, 3);
+  const bestLine = (e) => {
+    const p = bestPairRow(e), x = p || e.stats;
+    return `${p ? `${esc(p.name)}: ` : ""}${F.num(0).format(x.win_rate || 0)}% печеливши · средно ${fmtR(x.avg_r || 0)} на сделка · ${x.trades} сделки`;
+  };
   const followedCount = followedInStyle().length;
   let sigBody;
   if (!followedCount) sigBody = emptyBox("◈", "Не следваш нито една стратегия", "Избери поне една стратегия и тук ще виждаш нейните сигнали.", `<a class="btn btn-primary" href="#/strategies">Към стратегиите ↗</a>`);
@@ -651,20 +720,20 @@ function viewDashboard() {
       <div class="metric-card"><div class="metric-top">Цените <span class="metric-icon">↻</span></div><div class="metric-value" style="font-size:20px">${d.prices_updated ? rel(d.prices_updated) : "—"}</div><div class="metric-foot">обновяват се на всеки ${d.settings?.refresh_minutes || 10} мин</div></div>
     </div>
     <div class="grid-2" style="margin-top:14px">
-      <section class="panel"><div class="panel-head"><div><p class="kicker">СИГНАЛИ СЕГА</p><h3>Какво да търгуваш</h3></div><a class="text-link" href="#/signals">Всички <span>↗</span></a></div>${sigBody}</section>
+      <section class="panel"><div class="panel-head"><div><p class="kicker">СИГНАЛИ СЕГА</p><h3>Налични сигнали</h3></div><a class="text-link" href="#/signals">Всички <span>↗</span></a></div>${sigBody}</section>
       <div class="stack">
         <section class="panel"><div class="panel-head"><div><p class="kicker">ЦЕНИ</p><h3>Валутни двойки</h3></div><span class="muted-small">промяна за деня</span></div>${pricesList()}</section>
         <section class="panel"><div class="panel-head"><div><p class="kicker">НОВИНИ · СЛЕДВАЩИТЕ 48 Ч</p><h3>Силни новини</h3></div><a class="text-link" href="#/news">Календар <span>↗</span></a></div>
           ${upcoming.length ? upcoming.map(newsCompact).join("") : `<p class="muted" style="font-size:12px">Няма силни новини в следващите 48 часа.</p>`}</section>
         <section class="panel"><div class="panel-head"><div><p class="kicker">НАЙ-ДОБРИ В ТЕСТА</p><h3>Стратегии</h3></div><a class="text-link" href="#/strategies">Всички <span>↗</span></a></div>
-          ${best.length ? best.map((e) => `<a class="news-compact" style="color:inherit;text-decoration:none" href="#/strategy/${esc(e.id)}"><span class="when">${verdictBadge(e.stats)}</span><span><strong>${esc(e.name)} · ${esc(e.tf_label)}</strong><small>${F.num(0).format(e.stats.win_rate)}% печеливши · средно ${fmtR(e.stats.avg_r)} на сделка · ${e.stats.trades} сделки</small></span></a>`).join("") : `<p class="muted" style="font-size:12px">Нито една стратегия не минава теста в момента.</p>`}</section>
+          ${best.length ? best.map((e) => `<a class="news-compact" style="color:inherit;text-decoration:none" href="#/strategy/${esc(e.id)}"><span class="when">${headlineBadge(e)}</span><span><strong>${esc(e.name)} · ${esc(e.tf_label)}</strong><small>${bestLine(e)}</small></span></a>`).join("") : `<p class="muted" style="font-size:12px">Нито една стратегия не минава теста в момента.</p>`}</section>
       </div>
     </div>`;
 }
 
 function pricesList() {
   const pairs = S.data?.pairs || {};
-  return Object.entries(pairs).map(([k, p]) => `<div class="price-row"><strong>${esc(p.name)}</strong><span>${px(k, p.price)}</span>
+  return Object.entries(pairs).map(([k, p]) => `<div class="price-row"><span><strong>${esc(p.name)}</strong><small class="quote-time">${p.price_time ? `${quoteFresh(k) ? "Последна" : "Стара котировка"}: ${esc(when(p.price_time))}` : "Няма текуща котировка"}</small></span><span>${px(k, p.price)}</span>
     <span class="chg ${p.change_pct > 0 ? "pos" : p.change_pct < 0 ? "neg" : ""}">${p.change_pct == null ? "—" : pct(p.change_pct, 2)}</span></div>`).join("");
 }
 
@@ -684,13 +753,14 @@ function viewSignals() {
   const closedOnly = done.filter((s) => s.status === "closed");
   const sumR = closedOnly.reduce((a, s) => a + s.r, 0);
   let body;
-  if (list.length) body = `<div class="sig-grid">${list.map(signalCard).join("")}</div>`;
-  else if (S.sigFilter === "now") body = emptyBox("⌁", "Няма сигнали в момента", followedInStyle().length ? "Стратегиите, които следваш, нямат сигнал сега. Новите сигнали се появяват тук автоматично." : "Не следваш нито една стратегия. Избери от раздел „Стратегии“.", `<a class="btn btn-outline" href="#/strategies">Стратегии ↗</a>`);
+  if (list.length) body = `<div class="sig-grid">${S.sigFilter === "now" ? signalGroups(list) : list.map(signalCard).join("")}</div>`;
+  else if (S.sigFilter === "now") body = emptyBox("⌁", "Няма сигнали в момента", noSignalsReason(), `<a class="btn btn-outline" href="#/strategies">Стратегии ↗</a>`);
   else body = emptyBox("▤", "Няма приключени сигнали", "През последните 14 дни няма приключени сигнали от избраните стратегии.");
   return `
     <div class="page-heading"><div><p class="kicker">СИГНАЛИ</p><h1>Сигнали</h1>
       <p>Сигналите от стратегиите, които следваш${S.settings.style !== "all" ? ` (само ${STYLE_NAMES[S.settings.style].toLowerCase()} търговия)` : ""}. Натисни сигнал, за да видиш точно какво да направиш.</p></div>
       <span class="page-flag"><span class="status-dot"></span> ${current.length} активни сега</span></div>
+    ${evaluationNotice()}${portfolioRiskNotice()}${FX.PAIR_KEYS.map(conflictNotice).join("")}
     <div class="filter-bar"><div class="filter-group">
         <button class="chip ${S.sigFilter === "now" ? "active" : ""}" data-sigfilter="now">Сега (${current.length})</button>
         <button class="chip ${S.sigFilter === "done" ? "active" : ""}" data-sigfilter="done">Приключили, 14 дни (${done.length})</button>
@@ -698,7 +768,7 @@ function viewSignals() {
         <button class="chip ${S.showAll ? "active" : ""}" data-showall>${S.showAll ? "✓ " : ""}И от стратегии, които не следвам</button></div>
       <label class="search-wrap"><span>⌕</span><input type="search" id="pair-search" value="${esc(S.pairQuery)}" placeholder="Търси двойка, напр. EUR/USD" aria-label="Търси двойка"></label></div>
     ${S.sigFilter === "done" && closedOnly.length ? `<div class="warn-line info" style="margin:0 0 14px">Последни 14 дни: ${closedOnly.length} сделки, общо ${fmtR(sumR)} (${rMoney(sumR)} при твоя риск). Сделките, които не са се активирали, не носят загуба.</div>` : ""}
-    <p class="what">${S.settings.smartPairs ? `Подборът по инструменти е включен. ${hidden} текущи модела са скрити заради оценката на конкретния инструмент. Следените сигнали остават достъпни.` : "Подборът по инструменти е изключен."} <a href="#/settings">Настройки</a></p>
+    <p class="what">${S.settings.smartPairs ? `Показват се сигнали само за двойките, на които стратегията е „Силна“. ${hidden} текущи модела са скрити заради оценката за съответната двойка. Следените сигнали остават достъпни.` : "Подборът по двойки е изключен: показват се сигнали за всички двойки."} <a href="#/settings">Настройки</a></p>
     ${body}`;
 }
 
@@ -803,15 +873,15 @@ function stepsFor(sig) {
 function tipsFor(sig, strat) {
   const tips = [];
   const pair = signalPairChoice(sig);
-  tips.push([pair.status === "suitable" ? "info" : "warn", `${pair.label} за ${sig.pair_name}. ${pair.reason}`]);
+  tips.push([pair.allowed ? "info" : "warn", `${pair.label} за ${sig.pair_name}. ${pair.reason}`]);
   const hi = newsFor(pairCurrencies(sig.pair), now() - 15 * 60, now() + 3 * 3600, ["high"]);
   if (isCurrent(sig) && !quoteFresh(sig.pair)) tips.push(["warn", "Котировката е остаряла. Не изпълнявай вход или промяна на стоп, докато не провериш данните при брокера."]);
   if (isCurrent(sig) && hi.length) tips.push(["warn", `Силна новина за ${hi[0].currency} ${rel(hi[0].time)}: „${hi[0].title_bg}“. Около новини спредът се разширява и цената скача. По-безопасно е да изчакаш след новината или да пропуснеш.`]);
   const d = new Date();
   if (isCurrent(sig) && sig.style === "swing" && d.getDay() === 5) tips.push(["warn", "Петък е. Суинг сделката може да остане отворена през уикенда, а в понеделник цената може да отвори далеч от петъчната (гап)."]);
-  if (strat && strat.stats.verdict !== "good") tips.push(["warn", `Тази стратегия не е в групата „Силна“ в теста. ${VERDICT_TIP[strat.stats.verdict]}`]);
+  if (strat && strat.stats.verdict !== "good") tips.push([pair.allowed ? "info" : "warn", `Общо за всички двойки стратегията е „${FX.VERDICT_LABELS[strat.stats.verdict]}“. За този сигнал по-важна е оценката за ${sig.pair_name}.`]);
   if (S.settings.risk > 0.5) tips.push(["warn", `Рискът ти е ${S.settings.risk}% на сделка. Препоръката е 0.5%. При серия от ${strat?.stats.max_losing_streak || 8} загуби подред ще загубиш около ${F.num(1).format((strat?.stats.max_losing_streak || 8) * S.settings.risk)}% от сметката.`]);
-  if (strat?.stats.max_losing_streak) tips.push(["info", `В теста тази стратегия е имала до ${strat.stats.max_losing_streak} загуби подред. Това е нормално и е заложено в риска. Не увеличавай лота след загуба.`]);
+  if (strat?.stats.max_losing_streak) tips.push(["info", `В теста тази стратегия е имала до ${strat.stats.max_losing_streak} загуби подред. Следващата серия може да е по-дълга. Провери дали избраният риск е по силите на сметката ти.`]);
   tips.push(["info", "Не мести стопа по-далеч. При гапове, плъзгане или голям спред реалната загуба може да надхвърли планирания риск."]);
   return tips;
 }
@@ -829,10 +899,12 @@ function viewSignal(id) {
     <div class="detail-back"><a class="back-btn" href="#/signals">← Всички сигнали</a><span class="muted-small">Сигнал от ${when(sig.signal_time)}</span></div>
     <div class="detail-head"><div><p class="kicker">${esc(sig.strategy_name.toUpperCase())} · ${esc(sig.tf_label.toUpperCase())} · ${STYLE_NAMES[sig.style].toUpperCase()}</p>
       <h1>${dirBadge(sig)} ${esc(sig.pair_name)} <span class="st ${st.cls}">${esc(st.label)}</span></h1>
-      <p>${strat ? `Стратегия: <a class="link" href="#/strategy/${esc(strat.id)}">${esc(strat.name)} · ${esc(strat.tf_label)}</a> ${verdictBadge(strat.stats)}` : ""}</p></div>
+      <p>${strat ? `Стратегия: <a class="link" href="#/strategy/${esc(strat.id)}">${esc(strat.name)} · ${esc(strat.tf_label)}</a> ${pairBadge(strat, sig.pair)}` : ""}</p></div>
       <div class="chips-row">${watchButton(sig)}<button type="button" class="btn btn-quiet btn-sm" id="copy-plan">Копирай плана</button></div></div>
     ${freshnessNotice(sig)}
     ${watchDetail(sig)}
+    <div class="panel signal-personal"><h3>Твоята сделка</h3><p class="what">Ако си влязъл при брокера, добави реалния вход и обем в личния дневник.</p><div class="chips-row">${ordersOf(sig).map((order) => `<button type="button" class="btn btn-outline" data-journal-signal="${esc(sig.id)}" data-journal-dir="${order.dir}">Запиши ${order.dir === 1 ? "покупка" : "продажба"}</button>`).join("")}</div></div>
+    ${signalAvailability(sig)}${conflictNotice(sig.pair)}
     <div class="status-box ${boxCls}"><strong>${esc(st.label)}.</strong> ${esc(st.text)}</div>
     <div class="detail-grid"><div class="detail-column">
       <section class="panel trade-plan-panel"><div class="panel-head"><div><p class="kicker">НИВА</p><h3>${orders.length > 1 ? "Две възможни посоки" : "Вход, стоп и цели"}</h3></div><span class="pill pill-neutral">${esc(sig.tf_label)}</span></div>
@@ -873,30 +945,34 @@ function newsCompactWithImpact(e, signal = null) {
 }
 
 function viewStrategies() {
-  const f = S.stratFilter;
-  const list = sortedStrategies().filter((e) => styleOk(e.style)).filter((e) => f === "all"
+  const f = S.stratFilter, pair = FX.PAIRS[S.stratPair] ? S.stratPair : "";
+  const pairName = pair ? pairInfo(pair).name : "";
+  const inView = strategies().filter((e) => styleOk(e.style) && (f === "archived" ? e.retired : !e.retired) && (!pair || (e.pairs || FX.PAIR_KEYS).includes(pair)));
+  const list = sortedStrategies(pair).filter((e) => inView.includes(e)).filter((e) => f === "all" || f === "archived"
     || (f === "followed" && isFollowed(e.id))
-    || (f === "good" || f === "weak" || f === "bad" || f === "few") && e.stats.verdict === f
-    || ((f === "day" || f === "swing") && e.style === f)
-    || (f === "gold" && (e.pairs || []).includes("XAUUSD")));
+    || ((f === "good" || f === "weak" || f === "bad" || f === "few") && ratingOf(e, pair) === f));
   const counts = { good: 0, weak: 0, bad: 0, few: 0 };
-  strategies().filter((e) => styleOk(e.style)).forEach((e) => counts[e.stats.verdict]++);
+  inView.forEach((e) => counts[ratingOf(e, pair)]++);
   return `
     <div class="page-heading"><div><p class="kicker">СТРАТЕГИИ</p><h1>Стратегии</h1>
-      <p>Разгледай тестваните варианти за ${STYLE_NAMES[S.settings.style].toLowerCase()} търговия. Избери кои стратегии да изчисляват сигнали. Оценката не е гаранция за печалба.</p></div>
-      <span class="page-flag">${counts.good} силни · ${counts.weak} слаби · ${counts.bad} не работят · ${counts.few} с малко сделки</span></div>
-    <div class="filter-bar"><div class="filter-group">
-      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedInStyle().length})`], ["gold", "Злато"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
-      ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране</button>` : `<span class="muted-small">По подразбиране: „Силна“ и варианти с отделно оценени подходящи инструменти.</span>`}</div>
+      <p>Разгледай тестваните варианти за ${STYLE_NAMES[S.settings.style].toLowerCase()} търговия. Всяка стратегия е оценена отделно за всяка валутна двойка: една и съща стратегия може да е „Силна“ за златото и да губи на EUR/USD. Избери двойка, за да видиш какво работи на нея. Оценката не е гаранция за печалба.</p></div>
+      <span class="page-flag">${pair ? `${esc(pairName)}: ` : ""}${counts.good} силни · ${counts.weak} слаби · ${counts.bad} не работят · ${counts.few} с малко сделки</span></div>
+    <div class="filter-bar"><div class="filter-group" role="group" aria-label="Валутна двойка">
+      ${[["", "Всички двойки"], ...FX.PAIR_KEYS.map((k) => [k, FX.PAIRS[k].name])].map(([k, l]) => `<button class="chip ${pair === k ? "active" : ""}" data-stratpair="${k}" aria-pressed="${pair === k}">${l}</button>`).join("")}</div></div>
+    <div class="filter-bar"><div class="filter-group" role="group" aria-label="Оценка">
+      ${[["all", "Всички"], ["good", "Силни"], ["weak", "Слаби"], ["bad", "Не работят"], ["few", "Малко сделки"], ["followed", `Следвам (${followedInStyle().length})`], ["archived", "Архив"]].map(([k, l]) => `<button class="chip ${S.stratFilter === k ? "active" : ""}" data-stratfilter="${k}">${l}</button>`).join("")}</div>
+      ${S.settings.followed ? `<button class="text-link" data-reset-follow>Върни избора по подразбиране</button>` : `<span class="muted-small">По подразбиране: варианти с инструмент, който покрива подбора.</span>`}</div>
+    <p class="what" style="margin:-4px 0 12px">${pair ? `Оценките, графиките и числата на картите са само за ${esc(pairName)}.` : "Без избрана двойка картата показва най-добрата оценка по двойки. Цветните етикети под описанието показват всяка двойка поотделно."}</p>
     <details class="panel" style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Как да чета картите?</summary>
       <div class="tips">
         <div class="tip"><span class="tip-icon">%</span><span><strong>Печеливши</strong>: от 100 сделки колко са завършили на печалба.</span></div>
         <div class="tip"><span class="tip-icon">R</span><span><strong>Среден резултат</strong>: колко средно носи една сделка, измерено в „R“. 1R = рискът ти на сделка. +0.10R при риск $10 означава средно +$1 на сделка.</span></div>
         <div class="tip"><span class="tip-icon">↓</span><span><strong>Най-голям спад*</strong>: колко най-много е падала сметката от върха си при твоя риск (${S.settings.risk}% на сделка).</span></div>
         <div class="tip"><span class="tip-icon">×</span><span><strong>Загуби подред</strong>: най-дългата серия загуби в теста. Бъди готов за нея.</span></div>
-        <div class="tip"><span class="tip-icon">●</span><span><strong>Оценка</strong>: „Силна“ = печели след спреда и в двете половини на периода. „Слаба“ = печели малко или нестабилно. „Не работи“ = губи.</span></div>
+        <div class="tip"><span class="tip-icon">●</span><span><strong>Оценка</strong>: смята се отделно за всяка двойка. „Силна“ = поне 30 сделки на двойката, печели след спреда в двете половини на периода и в последните 30%, остава на печалба и при двоен спред. „Слаба“ = печели малко или нестабилно. „Не работи“ = губи.</span></div>
+        <div class="tip"><span class="tip-icon">⌁</span><span><strong>Сигнали</strong>: при включен подбор (Настройки) сайтът показва сигнал за инструмент с положителна проверка. Кандидатите за наблюдение са обозначени отделно.</span></div>
       </div></details>
-    <div class="strat-grid">${list.map(stratCard).join("") || emptyBox("◈", "Няма стратегии", "Няма стратегии за този филтър.")}</div>`;
+    <div class="strat-grid">${list.map((e) => stratCard(e, pair)).join("") || emptyBox("◈", "Няма стратегии", "Няма стратегии за този филтър.")}</div>`;
 }
 
 function viewStrategy(id) {
@@ -924,18 +1000,19 @@ function viewStrategy(id) {
   return `
     <div class="detail-back"><a class="back-btn" href="#/strategies">← Всички стратегии</a></div>
     <div class="detail-head"><div><p class="kicker">${esc(e.tf_label.toUpperCase())} · ${STYLE_NAMES[e.style].toUpperCase()} · ${esc(pairsLabel(e).toUpperCase())}</p>
-      <h1>${esc(e.name)} ${verdictBadge(s)}</h1><p>${esc(e.short)} ${approximationTag(e)}</p></div>
-      <button type="button" class="follow-btn ${followed ? "on" : ""}" data-follow="${esc(e.id)}" style="padding:11px 16px">${followed ? "✓ Следвам тази стратегия" : "+ Следвай тази стратегия"}</button></div>
+      <h1>${esc(e.name)} ${headlineBadge(e)}</h1><p>${esc(e.short)} ${approximationTag(e)}</p>${pairStrip(e)}</div>
+      ${strategyFollowButton(e, true)}</div>
+    <section class="panel" style="margin-bottom:14px"><div class="panel-head"><div><p class="kicker">ОЦЕНКА ПО ВАЛУТНИ ДВОЙКИ</p><h3>Къде работи и къде не</h3></div></div>
+      ${e.per_pair?.length ? pairTable(e) : `<p class="muted">Няма данни.</p>`}${testCostsDetails(e)}
+    </section>
+    <p class="kicker" style="margin:4px 0 8px">ОБЩО ЗА ВСИЧКИ ДВОЙКИ ${verdictBadge(s)}</p>
     ${tiles}
     <div class="grid-2" style="margin-top:14px"><div class="stack">
-      <section class="panel"><div class="panel-head"><div><p class="kicker">РАЗВИТИЕ НА СМЕТКАТА В ТЕСТА</p><h3>Как е вървяла</h3></div><span class="muted-small">при риск ${risk}% на сделка</span></div>
+      <section class="panel"><div class="panel-head"><div><p class="kicker">РАЗВИТИЕ НА СМЕТКАТА В ТЕСТА</p><h3>Как е вървяла</h3></div><span class="muted-small">при риск ${risk}% на сделка · всички двойки</span></div>
         <div class="equity-box" id="equity-box"></div></section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">ПО ГОДИНИ</p><h3>Всяка година поотделно</h3></div></div>
         ${s.yearly?.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Година</th><th class="num">Сделки</th><th class="num">Резултат</th><th class="num">При риск ${risk}%</th></tr></thead><tbody>
           ${s.yearly.map((y) => `<tr><td>${y.year}</td><td class="num">${y.trades}</td><td class="num ${y.r >= 0 ? "pos" : "neg"}">${fmtR(y.r)}</td><td class="num ${y.r >= 0 ? "pos" : "neg"}">${pct(y.r * risk)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Няма данни.</p>`}
-      </section>
-      <section class="panel"><div class="panel-head"><div><p class="kicker">ПО ВАЛУТНИ ДВОЙКИ</p><h3>Къде работи най-добре</h3></div></div>
-        ${e.per_pair?.length ? pairTable(e) : `<p class="muted">Няма данни.</p>`}
       </section>
     </div><div class="stack">
       <section class="panel"><div class="panel-head"><div><p class="kicker">ПРАВИЛА</p><h3>Как работи</h3></div></div>
@@ -1019,28 +1096,28 @@ function viewSettings() {
               <label><input type="radio" name="style" value="day" ${st.style === "day" ? "checked" : ""}><span>Дневна</span></label>
               <label><input type="radio" name="style" value="swing" ${st.style === "swing" ? "checked" : ""}><span>Суинг</span></label>
 </div>
-            <span class="what"><strong>Дневна</strong>: графики 15 минути и 1 час, сделките се затварят до 23:00 същия ден. <strong>Суинг</strong>: графики 4 часа и 1 ден, сделките се държат от няколко дни до няколко седмици, по-малък обем при същия риск.</span></div>
-          <div class="form-field"><label><input type="checkbox" name="smartPairs" ${st.smartPairs ? "checked" : ""}> Подбирай сигналите според инструмента</label>
-            <span class="what">Скрива текущи модели при отрицателна, неустойчива или твърде малка извадка. Положителен стар архив без отделни периоди е означен като непълна проверка. Следените сигнали и историята остават видими.</span></div>
+            <span class="what"><strong>Дневна</strong>: M15/H1. Новите кандидати приключват до 22:00 Europe/Sofia; конкретният час е в правилата. <strong>Суинг</strong>: H4/D1, с държане през няколко сесии. Архивните варианти запазват старите си правила.</span></div>
+          <div class="form-field"><label><input type="checkbox" name="smartPairs" ${st.smartPairs ? "checked" : ""}> Показвай сигнали само за подбраните инструменти</label>
+            <span class="what">Използва оценката на конкретната двойка. Допуска исторически силните и кандидатите, които покриват проверката за наблюдение. Стари оценки и резултати с други разходи се пропускат. Следените сигнали остават видими.</span></div>
           <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedInStyle().length}) ↗</a></div>
         </form></section>
-      <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Стопът определя обема, не обратното.</h3>
+      <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Как се смята обемът</h3>
         <p>Първо стратегията казва къде е стопът. После сайтът смята колко лота да купиш, така че при стоп планираната загуба да съответства на избрания риск. При гап или приплъзване реалната загуба може да е по-голяма. Затова при широк стоп обемът е малък, а при тесен е по-голям.</p>
         <div class="settings-fact"><span>Пример</span><strong>$2 000 · 0.5% · стоп 20 пипса</strong></div>
         <div class="settings-fact"><span>Риск</span><strong>$10</strong></div>
         <div class="settings-fact"><span>Обем за EUR/USD</span><strong>10 ÷ (20 × $10) = 0.05 лота</strong></div>
         <div class="settings-fact"><span>Данни</span><strong>Само в този браузър</strong></div></section>
-    </div>`;
+    </div>${noticesPanel()}`;
 }
 
 function viewHelp() {
   const d = S.data || {};
   return `
-    <div class="page-heading"><div><p class="kicker">ПОМОЩ</p><h1>Как работи</h1><p>Кратко и ясно: откъде идват сигналите, как да ги използваш и какви са ограниченията.</p></div></div>
+    <div class="page-heading"><div><p class="kicker">ПОМОЩ</p><h1>Как работи</h1><p>Откъде идват данните, как се смята сигналът и как да четеш резултатите.</p></div></div>
     <div class="how-steps">
       <div class="how-step"><span class="num">01</span><strong>Цените</strong><p>На всеки ${d.settings?.refresh_minutes || 10} минути сайтът сваля цените на 7 валутни двойки и златото (XAU/USD).</p></div>
       <div class="how-step"><span class="num">02</span><strong>Стратегиите</strong><p>Сравнява ${strategies().length} исторически тествани варианта. Сигнали се изчисляват за публикуваните и избраните от теб стратегии.</p></div>
-      <div class="how-step"><span class="num">03</span><strong>Сигналът</strong><p>Когато правилата на стратегия са изпълнени, се появява сигнал с вход, стоп и две цели.</p></div>
+      <div class="how-step"><span class="num">03</span><strong>Сигналът</strong><p>Когато правилата на стратегия са изпълнени, се появява сигнал с вход, стоп и конкретно правило за изход.</p></div>
       <div class="how-step"><span class="num">04</span><strong>Твоят обем</strong><p>Сайтът изчислява приблизителен лот според баланса, стопа и риска. Брокерският маржин и реалното изпълнение трябва да се проверят отделно.</p></div>
       <div class="how-step"><span class="num">05</span><strong>Новините</strong><p>Предупреждава, ако наближава силна новина за валутите в сигнала.</p></div>
     </div>
@@ -1049,11 +1126,11 @@ function viewHelp() {
         <details><summary>Пипс</summary><p>Най-малката обичайна стъпка на цената. При EUR/USD това е 0.0001 (от 1.1200 до 1.1201). При USD/JPY е 0.01.</p></details>
         <details><summary>Лот</summary><p>Размерът на сделката. 1 лот = 100 000 единици от валутата. 0.01 лот (микролот) е най-малкият при повечето брокери. При EUR/USD 1 лот = около $10 на пипс, 0.10 лота = $1 на пипс.</p></details>
         <details><summary>Стоп (Stop Loss)</summary><p>Цената, на която сделката се затваря автоматично на загуба. Задължителен е. Никога не го мести по-далеч.</p></details>
-        <details><summary>Цел (Take Profit)</summary><p>Цената, на която сделката се затваря автоматично на печалба. Тук има две цели: половината се затваря на Цел 1, другата половина на Цел 2.</p></details>
+        <details><summary>Цел (Take Profit)</summary><p>Цената, на която сделката се затваря автоматично на печалба. Някои стратегии имат една или две цели, други излизат по индикатор или в определен час. Точното правило е към сигнала.</p></details>
         <details><summary>R (единица риск)</summary><p>R е рискът ти на една сделка. Ако рискуваш $10, +1R = +$10, −1R = −$10, +0.5R = +$5. Така стратегиите се сравняват независимо от размера на сметката.</p></details>
         <details><summary>Buy Stop / Sell Stop</summary><p>Отложена поръчка. Buy Stop купува, когато цената се качи до нивото. Sell Stop продава, когато цената слезе до нивото. Така влизаш само ако пазарът потвърди посоката.</p></details>
         <details><summary>Спред</summary><p>Разликата между цената за купуване и за продаване. Това е таксата на брокера. В тестовете е изваден от всяка сделка.</p></details>
-        <details><summary>Дневна и суинг търговия</summary><p>Дневната търговия ползва графика 1 час и сделките се затварят до вечерта. Суинг търговията ползва графики 4 часа и 1 ден, а сделките се държат дни или седмици.</p></details>
+        <details><summary>Дневна и суинг търговия</summary><p>Дневната търговия използва M15/H1. Новите дневни варианти приключват в същия ден, а часът е в правилата. Суинг търговията ползва графики 4 часа и 1 ден, а сделките се държат дни или седмици.</p></details>
         <details><summary>Спад (drawdown)</summary><p>Колко е паднала сметката от най-високата си точка до най-ниската след нея. Показва колко болезнен може да е лош период.</p></details>
       </section>
       <div class="stack">
@@ -1061,18 +1138,18 @@ function viewHelp() {
           <ul class="rules">
             <li>Всяка стратегия се проверява върху исторически свещи. Това не симулира напълно реалните условия за изпълнение при брокера.</li>
             <li>Графики 15 минути, 1 час и 4 часа: данни от около 3 години. Графика 1 ден: от около 2008 г.</li>
-            <li>Сделките се следят по 15-минутните свещи, за да е ясно кое е ударено първо: стопът или целта.</li>
+            <li>Сделките се следят по 15-минутните свещи, за по-точно проследяване на стопа и целта. Точният ред вътре в свещта остава неизвестен.</li>
             <li>Стратегиите с непълно описание се маркират „приблизителни правила“. Резултатите се отнасят само за кодираната версия.</li>
-            <li>От всяка сделка е изваден спред (1–1.5 пипса според двойката).</li>
+            <li>От всяка сделка се изваждат зададените моделни разходи. При началните настройки това е спредът от каталога.</li>
             <li>Ако в една свещ са ударени и стопът, и целта, тестът приема, че първо е ударен стопът.</li>
             <li>Статистиката „след старта“ е моделирана и не доказва, че сигналът е бил видим преди задействането.</li>
           </ul></section>
-        <section class="panel"><p class="kicker">ОГРАНИЧЕНИЯ</p><h3 style="margin-bottom:8px">Важно да знаеш</h3>
+        <section class="panel"><p class="kicker">ОГРАНИЧЕНИЯ</p><h3 style="margin-bottom:8px">Данни и изпълнение</h3>
           <ul class="rules">
             <li>Миналите резултати не гарантират бъдещите. Стратегия, която е печелила, може да започне да губи.</li>
             <li>Цените са от ${esc(d.sources?.prices || "безплатен източник")}. Цената при твоя брокер може леко да се различава.</li>
             <li>Новините са от ${esc(d.sources?.news || "ForexFactory")}.</li>
-            <li>Суапове (такси за държане през нощта) и комисиони не са включени.</li>
+            <li>Началният разход е моделен. Комисиона, приплъзване и суап могат да се зададат в Лабораторията; резултатът пази използваните стойности.</li>
             <li>Това не е инвестиционен съвет. Ти решаваш дали и как да търгуваш.</li>
           </ul></section>
       </div>
@@ -1081,7 +1158,7 @@ function viewHelp() {
 
 /* ------------------------------------------------------------ рамка, маршрути */
 
-const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Попитай Пулс", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
+const TITLES = { dashboard: "Начало", signals: "Сигнали", watch: "Следени сигнали", journal: "Журнал на сигналите", signal: "Сигнал", strategies: "Стратегии", strategy: "Стратегия", news: "Новини", analysis: "Попитай Пулс", workshop: "Мои стратегии", risk: "Риск и дневник", settings: "Настройки", help: "Как работи", lab: "Лаборатория" };
 
 function parseRoute() {
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/");
@@ -1131,9 +1208,10 @@ function render() {
   renderChrome();
   const { view, id } = S.route;
   if (!d?.ready && view !== "lab") { main.innerHTML = viewLoading(); return; }
+  recordObservedSignals();
   const views = {
     dashboard: viewDashboard, signals: viewSignals, watch: viewWatch, signal: () => viewSignal(id), strategies: viewStrategies,
-    strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, analysis: () => viewNewsAnalysis(id), workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
+    journal: viewObserved, strategy: () => viewStrategy(id), news: viewNews, risk: viewRisk, analysis: () => viewNewsAnalysis(id), workshop: () => viewLab(id || "mine"), settings: viewSettings, help: viewHelp, lab: () => viewLab(id),
   };
   main.innerHTML = views[view]();
   drawCharts();
@@ -1160,13 +1238,20 @@ function typing() {
   return a && document.getElementById("main").contains(a) && ["INPUT", "SELECT", "TEXTAREA"].includes(a.tagName);
 }
 
+const JSON_CACHE = new Map();
 async function getJSON(path, fallback) {
   const controller = typeof AbortController === "undefined" ? null : new AbortController();
   const timeout = controller ? setTimeout(() => controller.abort(), 15000) : null;
   try {
-    const r = await fetch(`${path}?t=${Math.floor(Date.now() / 30000)}`, { cache: "no-store", ...(controller ? { signal: controller.signal } : {}) });
+    const cached = JSON_CACHE.get(path), headers = {};
+    if (cached?.etag) headers["If-None-Match"] = cached.etag;
+    else if (cached?.modified) headers["If-Modified-Since"] = cached.modified;
+    const r = await fetch(path, { cache: "no-cache", headers, ...(controller ? { signal: controller.signal } : {}) });
+    if (r.status === 304 && cached) return cached.value;
     if (!r.ok) return fallback;
-    return await r.json();
+    const value = await r.json();
+    JSON_CACHE.set(path, { value, etag: r.headers?.get("ETag"), modified: r.headers?.get("Last-Modified") });
+    return value;
   } catch (_e) {
     return fallback;
   } finally { if (timeout !== null) clearTimeout(timeout); }
@@ -1196,8 +1281,26 @@ function currentEntry(entry) {
   return !version || (entry.version || 1) === version;
 }
 function researchEntry(entry) {
-  if (!S.catalog[entry.key]?.provisional) return entry;
-  return { ...entry, provisional: true, stats: { ...entry.stats, ...(entry.stats.verdict === "good" ? { verdict: "weak", verdict_label: "Слаба" } : {}) } };
+  const decorated = FX.decorateEntry(entry, S.catalog[entry.key]);
+  return { ...decorated, costs_outdated: (entry.cost_model || "model-v1") !== FX.costs.fingerprint(S.costProfile) };
+}
+
+async function recoverTracked(result, tracked, timestamp, meta) {
+  const found = new Set(result.signals.map((signal) => signal.id));
+  const missing = tracked.filter((signal) => isCurrent(signal) && !found.has(signal.id) && S.catalog[splitId(signal.strategy)[0]]);
+  if (!missing.length) return;
+  const prices = {};
+  await Promise.all([...new Set(missing.map((signal) => signal.pair))].flatMap((pair) => ["M15", "H1", "D1"].map(async (tf) => {
+    const data = await getJSON(`data/prices/${pair}_${tf}.json`, { bars: [] });
+    (prices[pair] = prices[pair] || {})[tf] = Array.isArray(data?.bars) ? data.bars : [];
+  })));
+  const ids = new Set(missing.map((signal) => signal.id));
+  const engine = new FX.Engine(prices, meta.quotes || {}, { launch: meta.launch, costs: S.costProfile, keepIds: [...ids] }).build(timestamp);
+  const list = [...new Set(missing.map((signal) => signal.strategy))].map((id) => {
+    const [key, tf] = splitId(id); return { strat: S.catalog[key], tf };
+  }).filter(({ strat, tf }) => strat?.tfs.includes(tf));
+  for (const signal of engine.run(list).signals) if (ids.has(signal.id)) { result.signals.push(signal); found.add(signal.id); }
+  S.trackingMissing = missing.filter((signal) => !found.has(signal.id)).map((signal) => signal.id);
 }
 
 /** Зарежда данните; без работещ cron показва само историческия каталог. */
@@ -1205,18 +1308,21 @@ let loadSequence = 0;
 async function load() {
   const seq = ++loadSequence;
   try {
-  const [meta, rawNews, results, recent, custom] = await Promise.all([
+  const [meta, rawNews, saved, recent, custom, bundled, costs] = await Promise.all([
     getJSON("data/meta.json", null), getJSON("data/news.json", { events: [] }), getJSON("data/results.json", null),
     getJSON("data/recent.json", null), getJSON("data/custom.json", { strategies: [] }),
+    getJSON("data/catalog.json", null), getJSON("api/state.php", { costs: {} }),
   ]);
   if (seq !== loadSequence) return;
   const news = { ...(rawNews || {}), events: Array.isArray(rawNews) ? rawNews : Array.isArray(rawNews?.events) ? rawNews.events : [] };
   news.events = news.events.filter((e) => e && typeof e.title === "string" && Number.isFinite(e.time));
   clearTimeout(S.timer);
   S.meta = meta;
-  S.results = results;
+  S.costProfile = FX.costs.normalize(costs?.costs || {});
   S.customSpecs = Array.isArray(custom?.strategies) ? custom.strategies : [];
   buildCatalog(S.customSpecs);
+  const results = FX.mergeResults(saved, bundled, S.catalog);
+  S.results = results;
   const entriesMap = (results && results.entries) || {};
   const hasQuotes = Object.values(meta?.quotes || {}).some((q) => q && Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
   if (!meta || !recent || !meta.prices_updated || !hasQuotes) {
@@ -1234,19 +1340,23 @@ async function load() {
     return;
   }
   const t = now();
-  const eng = new FX.Engine(recent.prices, meta.quotes || {}, { launch: meta.launch }).build(t);
+  const tracked = [...S.watch.list().map((w) => w.snapshot), ...S.observed.list().filter((r) => ["pending", "open"].includes(r.latest.status)).map((r) => r.latest)]
+    .filter((signal) => signal && typeof signal.id === "string" && typeof signal.strategy === "string" && FX.PAIRS[signal.pair] && FX.TIMEFRAMES[signal.tf]);
+  const eng = new FX.Engine(recent.prices, meta.quotes || {}, { launch: meta.launch, costs: S.costProfile, keepIds: tracked.map((s) => s.id) }).build(t);
   const published = ((results && results.published) || []).filter((id) => entriesMap[id] && S.catalog[splitId(id)[0]]);
   // Показваме всички тествани варианти, но изчисляваме сигнали само за публикуваните и тези, които потребителят следва.
   const entries = Object.values(entriesMap).filter(currentEntry).map(researchEntry);
   const selected = S.settings.followed ?? defaultsForEntries(entries);
-  const runIds = new Set([...published, ...selected, ...S.watch.list().map((w) => w.snapshot?.strategy).filter(Boolean)]);
+  const runIds = new Set([...published, ...selected, ...tracked.map((sig) => sig.strategy)]);
   const list = [];
   for (const id of runIds) {
     const [key, tf] = splitId(id);
     const strat = S.catalog[key];
-    if (strat && strat.tfs.includes(tf)) list.push({ strat, tf });
+    if (strat && strat.tfs.includes(tf) && (!FX.isRetired(strat, tf) || tracked.some((s) => s.strategy === id))) list.push({ strat, tf });
   }
   const res = eng.run(list);
+  await recoverTracked(res, tracked, t, meta);
+  if (seq !== loadSequence) return;
   S.engine = eng;
   S.data = {
     ready: true,
@@ -1260,6 +1370,8 @@ async function load() {
   S.error = null;
   const readySignals = res.signals.filter((sig) => quoteFresh(sig.pair));
   const changes = S.watch.ingest(readySignals);
+  recordObservedSignals();
+  SignalNotices.ingest(readySignals);
   if (typing()) renderChrome(); else render();
   if (changes.length) toast(`${changes.length} следени сигнала имат ново състояние. Провери „Следени“. `);
   S.timer = setTimeout(load, 5 * 60000);
@@ -1304,7 +1416,7 @@ function planText(sig) {
     if (size && !size.tooSmall && !size.invalid) lines.push(`Обем: ${lots(size.lots)}${size.b ? ` (${F.num(2).format(size.a)} с Цел 1 + ${F.num(2).format(size.b)} с Цел 2)` : ""} | Риск ${money(size.loss)}`);
   });
   const strat = stratById(sig.strategy);
-  if (ownExit(strat) && strat.exit_rules?.length) lines.push(`Истинско управление: ${strat.exit_rules.join(" ")}`);
+  if (ownExit(strat) && strat.exit_rules?.length) lines.push(`Правило за изход: ${strat.exit_rules.join(" ")}`);
   if (sig.status === "pending" && ordersOf(sig)[0].type !== "market") lines.push(`Важи до: ${when(sig.valid_until)}`);
   lines.push("Не е инвестиционен съвет.");
   return lines.join("\n");
@@ -1360,6 +1472,8 @@ document.addEventListener("click", (ev) => {
   if (t.closest("[data-showall]")) { S.showAll = !S.showAll; render(); return; }
   const stf = t.closest("[data-stratfilter]");
   if (stf) { S.stratFilter = stf.dataset.stratfilter; render(); return; }
+  const stp = t.closest("[data-stratpair]");
+  if (stp) { S.stratPair = stp.dataset.stratpair; render(); return; }
   if (t.closest("[data-reset-follow]")) { S.settings.followed = null; saveSettings(); toast("Възстановен е изборът по обща оценка и подходящи инструменти."); render(); load(); return; }
   const newsDay = t.closest("[data-newsday]"), newsNext = t.closest("[data-news-next]");
   if (newsDay || newsNext) {

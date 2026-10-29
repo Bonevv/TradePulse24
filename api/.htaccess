@@ -3,6 +3,6 @@
 <FilesMatch "\.php$">
   Require all denied
 </FilesMatch>
-<FilesMatch "^(cron|save|puls)\.php$">
+<FilesMatch "^(cron|save|puls|state)\.php$">
   Require all granted
 </FilesMatch>
