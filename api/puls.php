@@ -18,8 +18,13 @@ try {
     $action = $input['action'] ?? 'chat';
     if (!is_string($action)) throw new PulsProblem('invalid_action', 'Непознато действие.');
     if ($action === 'check') {
-        $real = (string) ($config['admin_password'] ?? '');
-        if ($real === '' || $real === DEFAULT_ADMIN_PASSWORD || !is_string($input['password'] ?? null) || !hash_equals($real, $input['password'])) throw new PulsProblem('admin_required', 'За проверката е нужен вход в Лабораторията.', 403);
+        // Същото ограничение на грешните опити като при записа в Лабораторията.
+        $denied = admin_login($config, $input['password'] ?? null, (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), $now);
+        if ($denied !== null) {
+            if ($denied['status'] === 429) throw new PulsProblem('login_limit', $denied['error'], 429, $denied['retry']);
+            if ($denied['status'] === 503) throw new PulsProblem('storage_failed', $denied['error'], 503);
+            throw new PulsProblem('admin_required', 'За проверката е нужен вход в Лабораторията.', 403);
+        }
         // Проверяваме доставчика и при празен или стар календар, без да измисляме новини.
         $news = ['events' => [], 'updated' => $now]; $meta = [];
     }

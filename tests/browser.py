@@ -290,12 +290,13 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
               const id='lib_ema_20_50_200-D1', entry=stratById(id);
               entry.stats={...entry.stats,end:Date.now()/1000};
               S.settings.style='swing'; S.settings.smartPairs=true; S.settings.followed=[id];
-              S.data.signals=['EURUSD','USDJPY','XAUUSD'].map(pair=>({id:'pair-demo-'+pair,strategy:id,strategy_name:entry.name,pair,pair_name:FX.PAIRS[pair].name,tf:'D1',tf_label:'1 ден',style:'swing',status:'pending',signal_time:Date.now()/1000-600,valid_until:Date.now()/1000+3600,orders:[{type:'stop',dir:1,entry:100,stop:99,targets:[{w:1,level:null}]}]}));
+              S.data.signals=['EURUSD','USDJPY','XAUUSD'].map(pair=>({id:'pair-demo-'+pair,strategy:id,strategy_name:entry.name,pair,pair_name:FX.PAIRS[pair].name,tf:'D1',tf_label:'1 ден',style:'swing',status:'pending',signal_time:Date.now()/1000-600,valid_until:Date.now()/1000+3600,orders:[{type:'stop',dir:1,entry:100,stop:90,targets:[{w:1,level:null}]}]}));
               location.hash='#/signals'; render();
             }""")
             assert page.evaluate('mySignals().map(s=>s.pair)') == ['USDJPY','XAUUSD']
             assert '1 текущи модела са скрити' in page.locator('#main').inner_text()
-            assert 'Силна за USD/JPY' in page.locator('#main').inner_text()
+            # Без 30 сделки след теста историческата оценка остава „Силна в теста“.
+            assert 'Силна в теста за USD/JPY' in page.locator('#main').inner_text()
             page.evaluate("S.watch.add(S.data.signals[0]); render();")
             assert page.evaluate('mySignals().length') == 3, "Followed signal remains available after exclusion by instrument"
             page.evaluate("S.watch.ingest([{...S.data.signals[0],status:'cancelled',reason:'expired',exit_time:Date.now()/1000}]);")
@@ -352,7 +353,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert request("/data/private/backups/anything.json")[0] == 403
             with urllib.request.urlopen(base + "/api/state.php") as response:
                 etag = response.headers["ETag"]
-                assert json.loads(response.read())["release"] == "4.5"
+                assert json.loads(response.read())["release"] == "4.7"
             try:
                 urllib.request.urlopen(urllib.request.Request(base + "/api/state.php", headers={"If-None-Match": etag}))
                 raise AssertionError("Expected a conditional response")

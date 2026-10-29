@@ -8,12 +8,13 @@ function recordObservedSignals() {
   S.observed.ingest(signals.filter((sig) => quoteFresh(sig.pair)), now(), (sig) => styleOk(sig.style) && isFollowed(sig.strategy) && pairSignalVisible(sig));
 }
 
-function signalGroups(signals) {
-  return FX.signalTools.group(signals).map((group) => {
+/** Сходните сигнали (двойка, стил, посока, състояние) се показват като една идея. limit е броят групи. */
+function signalGroups(signals, limit = Infinity) {
+  return FX.signalTools.group(signals).slice(0, limit).map((group) => {
     if (group.signals.length === 1) return signalCard(group.signals[0]);
     const direction = group.directions.length > 1 ? "Покупка или продажба" : group.directions[0] === 1 ? "Покупка" : "Продажба";
-    return `<details class="signal-group"><summary><strong>${esc(FX.PAIRS[group.pair].name)} · ${direction}</strong><span>${group.signals.length} варианта · ${STYLE_NAMES[group.style]}</span><small>${group.state === "pending" ? "Чакат вход" : "Нивото вече е достигнато"} · сходните сигнали могат да зависят от едно движение</small></summary>
-      <p class="what">Входовете, стоповете и изходите на всеки вариант са отделни. Разгъни картата, която искаш да разгледаш.</p><div class="sig-grid">${group.signals.map(signalCard).join("")}</div></details>`;
+    return `<details class="signal-group"><summary><strong>${esc(FX.PAIRS[group.pair].name)} · ${direction}</strong><span>${group.signals.length} варианта · ${STYLE_NAMES[group.style]}</span><small>${group.state === "pending" ? "Чакат вход" : "Нивото вече е достигнато"} · една идея в няколко варианта, не отделни потвърждения</small></summary>
+      <p class="what">Входовете, стоповете и изходите на всеки вариант са отделни, но обикновено следят едно и също движение. Ако влизаш, избери един вариант: няколко позиции от групата умножават риска върху една идея.</p><div class="sig-grid">${group.signals.map(signalCard).join("")}</div></details>`;
   }).join("");
 }
 
@@ -28,7 +29,9 @@ function conflictNotice(pair) {
 function signalAvailability(sig) {
   if (["pending", "open"].includes(sig.status) && !(S.data?.signals || []).some((current) => current.id === sig.id))
     return '<div class="entry-state entry-stale"><strong>Няма актуално изчисление</strong><span>Показан е последният запазен запис. Провери данните, преди да използваш нивата.</span></div>';
-  const state = FX.signalTools.entryState(sig, S.data?.pairs?.[sig.pair]?.price, now(), quoteFresh(sig.pair) && (S.data?.signals || []).some((current) => current.id === sig.id), S.data?.market?.open !== false);
+  // Ако е въведена цена от брокера, съветът на картата е по нея.
+  const quote = entryQuote(sig), fresh = (quote?.source === "broker" || quoteFresh(sig.pair)) && (S.data?.signals || []).some((current) => current.id === sig.id);
+  const state = FX.signalTools.entryState(sig, quote?.price, now(), fresh, S.data?.market?.open !== false, entryLevelsFor(sig));
   if (!["pending", "open"].includes(sig.status)) return "";
   return `<div class="entry-state entry-${state.state}"><strong>${esc(state.label)}</strong><span>${esc(state.text)}</span></div>`;
 }
@@ -80,13 +83,41 @@ function viewObserved() {
     <p class="what">Това е журнал на ценовите модели. Реалните си сделки записваш отделно в „Риск и дневник“. И двата журнала се пазят само в този браузър.</p></section>`;
 }
 
-function downloadJSON(text, filename) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+function downloadJSON(text, filename, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
+}
+
+/* Сайтът пази минали новини 30 дни. Който иска по-дълга история, сваля копие (CSV за Excel или JSON). */
+const NEWS_FIELDS = ["time_sofia", "currency", "impact", "title", "title_bg", "forecast", "previous", "actual"];
+const newsStamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Sofia", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+function newsRows() {
+  return (S.data?.news || []).slice().sort((a, b) => a.time - b.time).map((e) => ({
+    time: e.time, time_sofia: newsStamp.format(new Date(e.time * 1000)), currency: e.currency || "", impact: e.impact || "",
+    title: e.title || "", title_bg: e.title_bg || "", forecast: e.forecast || "", previous: e.previous || "", actual: e.actual ?? "",
+  }));
+}
+function csvCell(value) {
+  let text = String(value ?? "");
+  // Текст, започващ с =, +, @ или -, който не е число, Excel би изпълнил като формула.
+  if (/^[=+@\t\r]/.test(text) || /^-(?![\d.])/.test(text)) text = "'" + text;
+  return /[";\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+function downloadNews(format) {
+  const rows = newsRows(), day = newsStamp.format(new Date()).slice(0, 10);
+  if (!rows.length) { toast("Няма записани новини за сваляне."); return; }
+  if (format === "csv") {
+    const text = "﻿" + [NEWS_FIELDS.join(";"), ...rows.map((row) => NEWS_FIELDS.map((key) => csvCell(row[key])).join(";"))].join("\r\n");
+    downloadJSON(text, `tradepulse24-novini-${day}.csv`, "text/csv;charset=utf-8");
+  } else {
+    downloadJSON(JSON.stringify({ source: S.data?.sources?.news || "ForexFactory", timezone: "Europe/Sofia", downloaded: Math.floor(Date.now() / 1000), events: rows }, null, 2), `tradepulse24-novini-${day}.json`);
+  }
 }
 
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-observed-export]")) downloadJSON(S.observed.export(), "tradepulse24-signali.json");
+  const news = event.target.closest("[data-news-download]");
+  if (news) downloadNews(news.dataset.newsDownload);
 });
 document.addEventListener("change", async (event) => {
   if (event.target.id !== "observed-import" || !event.target.files[0]) return;

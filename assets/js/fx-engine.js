@@ -3,10 +3,10 @@
   "use strict";
   const RECENT_DAYS = 14;
 
+  // Часовете следват Ню Йорк, затова зимата и лятото се сменят сами.
   FX.marketStatus = function (now) {
-    const d = new Date(now * 1000), wd = (d.getUTCDay() + 6) % 7, h = d.getUTCHours();
-    const closed = wd === 5 || (wd === 4 && h >= 21) || (wd === 6 && h < 21);
-    return { open: !closed, label: closed ? "Пазарът е затворен (уикенд)" : "Пазарът е отворен" };
+    const open = FX.marketOpenAt(now), goldBreak = open && FX.goldBreakAt(now);
+    return { open, gold_break: goldBreak, label: !open ? "Пазарът е затворен (уикенд)" : goldBreak ? "Пазарът е отворен · златото е в дневна почивка" : "Пазарът е отворен" };
   };
 
   class Engine {
@@ -27,7 +27,7 @@
         const raw = this.prices[pair];
         if (!raw) continue;
         const cleaned = { M15: FX.cleanWeekend("M15", raw.M15 || []), H1: FX.cleanWeekend("H1", raw.H1 || []), D1: FX.cleanWeekend("D1", raw.D1 || []) };
-        cleaned.H4 = FX.toH4(cleaned.H1);
+        cleaned.H4 = FX.dropOpenH4(FX.toH4(cleaned.H1), cleaned.H1);
         const mine = {};
         for (const tf of FX.TF_KEYS) {
           const sec = FX.TIMEFRAMES[tf].seconds;
@@ -55,7 +55,9 @@
         ends.push(s.t[s.n - 1] + s.sec);
         s.memo = {};
         const subs = [[this.get(pair, "M15"), 900], [this.get(pair, "H1"), 3600]];
-        const simulated = FX.bt.simulate(s, strat, this.now, subs);
+        // Първо проверяваме по-малките свещи след края на основната графика.
+        // Иначе стар чакащ модел може да бъде отменен, въпреки че вече е имал вход.
+        const simulated = FX.bt.simulate(s, strat, this.now, subs, 0, true);
         if (simulated.omitted_days !== undefined) omitted[pair] = simulated.omitted_days;
         for (const tr of simulated) {
           this.catchUp(tr, s, strat);
@@ -78,7 +80,10 @@
       if (tr.status !== "pending" && tr.status !== "open") return;
       let fine = this.get(s.pair, "M15"), step = 900;
       if (!fine) { fine = this.get(s.pair, "H1"); step = 3600; }
-      if (!fine) return;
+      if (!fine) {
+        if (tr.status === "pending" && tr.valid_until <= this.now) Object.assign(tr, { status: "cancelled", reason: "expired", exit_time: tr.valid_until });
+        return;
+      }
       const info = s.info, pip = s.pip, ex = strat.exit, start = s.t[s.n - 1] + s.sec;
       for (let j = 0; j < fine.n; j++) {
         if (fine.t[j] < start) continue;

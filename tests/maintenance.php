@@ -33,8 +33,20 @@ try {
     write_json(DATA_DIR . '/private/workspace.json', ['strategies' => [], 'entries' => [], 'history' => []]);
     maintenance_restore($original);
     verify(!is_file(DATA_DIR . '/costs.json') && !is_file(DATA_DIR . '/private/workspace.json'), 'Restoring an older copy clears later optional files');
-    for ($i = 0; $i < 7; $i++) maintenance_backup('test');
-    verify(count(glob(DATA_DIR . '/private/backups/*.json')) === 5, 'Keep the last five server copies');
+    $count = fn() => count(glob(DATA_DIR . '/private/backups/*.json'));
+    $before = $count();
+    maintenance_backup('test');
+    maintenance_backup('test');
+    verify($count() === $before + 1, 'Identical content does not create another copy');
+    for ($i = 0; $i < 15; $i++) { write_json(DATA_DIR . '/custom.json', ['strategies' => [], 'n' => $i]); maintenance_backup('test'); }
+    verify($count() === BACKUP_RECENT, 'Copies from one day keep the most recent ten');
+    $at = strtotime('2026-10-29T12:00:00Z');
+    $names = [];
+    for ($d = 0; $d < 100; $d++) for ($h = 0; $h < 3; $h++) $names[] = '/x/backup-' . gmdate('Ymd-His', $at - $d * 86400 - $h * 3600) . '-000000-abcd1234.json';
+    rsort($names, SORT_STRING);
+    $kept = array_values(array_diff($names, maintenance_backups_to_remove($names, $at)));
+    verify(count($kept) > BACKUP_RECENT && count($kept) <= BACKUP_RECENT + BACKUP_DAYS + BACKUP_WEEKS, 'Daily and weekly copies are kept beyond the recent ones');
+    verify(in_array($names[0], $kept, true) && !in_array(end($names), $kept, true), 'The newest copy stays and very old ones go');
     file_put_contents($folder . '/index.html', 'version-a');
     write_json($folder . '/release.json', ['version' => '4.5', 'files' => ['index.html' => hash('sha256', 'version-a')]]);
     verify(maintenance_installation()['ok'], 'Matching installation');

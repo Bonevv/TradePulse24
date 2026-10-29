@@ -1,7 +1,7 @@
 "use strict";
 
 const JOURNAL_KEY = "tradepulse24-journal-v1";
-const RISK_DEFAULTS = { daily: 1.5, weekly: 4, open: 2, instrument: 1 };
+const RISK_DEFAULTS = { daily: 1.5, weekly: 4, open: 2, instrument: 1, currency: 1.5 };
 const RiskJournal = {
   validate(trade) {
     if (!trade || typeof trade.id !== "string" || trade.id.length > 100 || !FX.PAIR_KEYS.includes(trade.pair) || !["day", "swing"].includes(trade.style)
@@ -89,7 +89,15 @@ const RiskJournal = {
     const exposure = {}, byPair = {};
     for (const trade of open) byPair[trade.pair] = (byPair[trade.pair] || 0) + this.openRisk(trade);
     for (const trade of open) for (const currency of [trade.pair.slice(0, 3), trade.pair.slice(3, 6)]) exposure[currency] = (exposure[currency] || 0) + 1;
-    return { closed, open, daily, weekly, byPair, openRisk: open.reduce((sum, t) => sum + this.openRisk(t), 0), totalR,
+    // Нетен риск по валута: покупка на EUR/USD е покупка на EUR и продажба на USD.
+    // Три покупки срещу долара са три пъти един залог; противоположните посоки се компенсират.
+    const byCurrency = {};
+    for (const trade of open) {
+      const risk = this.openRisk(trade), base = trade.pair.slice(0, 3), quote = trade.pair.slice(3, 6);
+      byCurrency[base] = (byCurrency[base] || 0) + trade.dir * risk;
+      byCurrency[quote] = (byCurrency[quote] || 0) - trade.dir * risk;
+    }
+    return { closed, open, daily, weekly, byPair, byCurrency, openRisk: open.reduce((sum, t) => sum + this.openRisk(t), 0), totalR,
       averageR: closed.length ? totalR / closed.length : null, drawdown, streak, worstStreak,
       repeated: Object.entries(exposure).filter(([, count]) => count >= 2).map(([currency]) => currency) };
   },
@@ -150,11 +158,27 @@ function journalFromForm(form) {
   };
 }
 
+const currencyName = (code) => code === "XAU" ? "злато" : code;
+const currencySide = (risk) => risk > 0 ? "в покупка" : "в продажба";
+/** Валутите, към които нетният отворен риск в една посока е над личния лимит. */
+function currencyOverLimit(stats, limit = JOURNAL.plan.currency) {
+  return Object.entries(stats.byCurrency || {}).filter(([, risk]) => Math.abs(risk) >= limit - 1e-9).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+}
+
 function portfolioRiskNotice() {
   const stats = RiskJournal.stats(journalTrades()), limit = JOURNAL.plan.instrument;
-  const over = Object.entries(stats.byPair).filter(([, risk]) => risk >= limit);
-  if (!over.length && stats.openRisk < JOURNAL.plan.open) return "";
-  return `<div class="risk-notice">Отчетен отворен риск: ${stats.openRisk.toFixed(2)}%. ${over.map(([pair, risk]) => `${FX.PAIRS[pair].name}: ${risk.toFixed(2)}% при лимит ${limit}%.`).join(" ")} <a class="link" href="#/risk">Прегледай позициите</a></div>`;
+  const over = Object.entries(stats.byPair).filter(([, risk]) => risk >= limit), currencies = currencyOverLimit(stats);
+  if (!over.length && !currencies.length && stats.openRisk < JOURNAL.plan.open) return "";
+  return `<div class="risk-notice">Отчетен отворен риск: ${stats.openRisk.toFixed(2)}%. ${over.map(([pair, risk]) => `${FX.PAIRS[pair].name}: ${risk.toFixed(2)}% при лимит ${limit}%.`).join(" ")} ${currencies.map(([code, risk]) => `${esc(currencyName(code))}: нетно ${Math.abs(risk).toFixed(2)}% ${currencySide(risk)} при лимит ${JOURNAL.plan.currency}%.`).join(" ")} <a class="link" href="#/risk">Прегледай позициите</a></div>`;
+}
+
+/** Отворени лични позиции в същата двойка и посока: втори вход по сходен сигнал удвоява риска върху една идея. */
+function similarOpenNotice(draft) {
+  if (!draft || draft.status !== "open" || !FX.PAIRS[draft.pair]) return "";
+  const same = journalTrades().filter((t) => t.status === "open" && t.pair === draft.pair && t.dir === draft.dir && t.id !== draft.id);
+  if (!same.length) return "";
+  const risk = same.reduce((sum, t) => sum + RiskJournal.openRisk(t), 0);
+  return `<p class="risk-notice">Вече имаш ${same.length === 1 ? "отворена позиция" : `${same.length} отворени позиции`} ${draft.dir === 1 ? "в покупка" : "в продажба"} на ${esc(FX.PAIRS[draft.pair].name)} с риск ${risk.toFixed(2)}%. Сходните сигнали обикновено са една идея: нова позиция добавя още риск към същото движение.</p>`;
 }
 
 function journalComparison(trade) {
@@ -175,6 +199,7 @@ function viewRisk() {
   if (stats.weekly >= plan.weekly) warnings.push("Достигнат е седмичният лимит. Направи пауза и провери размера и причините за загубите.");
   if (stats.openRisk >= plan.open) warnings.push("Отвореният риск е достигнал личния ти лимит.");
   for (const [pair, risk] of Object.entries(stats.byPair)) if (risk >= plan.instrument) warnings.push(`${FX.PAIRS[pair].name}: общ риск ${risk.toFixed(2)}% при лимит ${plan.instrument}%.`);
+  for (const [code, risk] of currencyOverLimit(stats, plan.currency)) warnings.push(`${currencyName(code)}: нетен риск ${Math.abs(risk).toFixed(2)}% ${currencySide(risk)} при лимит ${plan.currency}%. Сделките в различни двойки може да са един и същ залог.`);
   if (stats.repeated.length) warnings.push(`Няколко отворени сделки споделят ${stats.repeated.join(", ")}. Провери дали не зависят от една и съща новина или посока.`);
   const visible = journalTrades().filter((t) => t.style === S.settings.style).slice().sort((a, b) => b.opened - a.opened);
   const editing = JOURNAL.trades.find((t) => t.id === JOURNAL.editing);
@@ -183,13 +208,15 @@ function viewRisk() {
   return `<div class="page-heading"><div><p class="kicker">РИСК И ДИСЦИПЛИНА</p><h1>Риск и дневник</h1><p>Планът и дневникът са твои. Тук сравняваш реално отчетените сделки с правилата, които си си поставил.</p></div><span class="page-flag">${esc(S.settings.currency)} · личен дневник</span></div>
     ${JOURNAL.unreadable ? '<p class="risk-notice">Запазеният дневник не може да се прочете. Не е изтрит. Направи резервно копие на данните на браузъра, преди да записваш нови сделки.</p>' : ""}
     ${warnings.length ? `<div class="risk-notice">${warnings.map(esc).join("<br>")}</div>` : ""}
-    <section class="panel"><h2>Риск по инструменти</h2><p>${Object.entries(stats.byPair).map(([pair, risk]) => `${FX.PAIRS[pair].name}: <strong>${risk.toFixed(2)}%</strong>`).join(" · ") || "Няма отчетени отворени позиции."}</p><p class="what">Сборът включва само позициите в личния дневник. Частичните изходи намаляват оставащия обем. Текущият стоп се използва, когато си го въвел; иначе се запазва първоначалният риск. Противоположните сделки също имат риск и не се нетират.</p></section>
+    <section class="panel"><h2>Риск по инструменти</h2><p>${Object.entries(stats.byPair).map(([pair, risk]) => `${FX.PAIRS[pair].name}: <strong>${risk.toFixed(2)}%</strong>`).join(" · ") || "Няма отчетени отворени позиции."}</p><p class="what">Сборът включва само позициите в личния дневник. Частичните изходи намаляват оставащия обем. Текущият стоп се използва, когато си го въвел; иначе се запазва първоначалният риск. Противоположните сделки също имат риск и не се нетират.</p>
+      <h2>Нетен риск по валута</h2><p>${Object.entries(stats.byCurrency).filter(([, risk]) => Math.abs(risk) > 1e-9).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([code, risk]) => `${esc(currencyName(code))}: <strong>${Math.abs(risk).toFixed(2)}%</strong> ${currencySide(risk)}`).join(" · ") || "Няма нетен риск към отделна валута."}</p><p class="what">Покупка на EUR/USD, GBP/USD и AUD/USD е три пъти продажба на долара: рискът към USD се събира. Тук противоположните посоки се компенсират, за да се види реалният залог към всяка валута.</p></section>
     <div class="risk-metrics">${[["Дневни загуби", stats.daily.toFixed(2) + "% / " + plan.daily + "%"], ["Седмични загуби", stats.weekly.toFixed(2) + "% / " + plan.weekly + "%"], ["Отворен риск", stats.openRisk.toFixed(2) + "% / " + plan.open + "%"], ["Среден резултат", stats.averageR === null ? "Още няма сделки" : fmtR(stats.averageR)]].map(([label, value]) => `<section class="panel"><p class="kicker">${label}</p><strong>${value}</strong></section>`).join("")}</div>
     <p class="what">Лимитите обхващат дневните и суинг сделките в ${esc(S.settings.currency)}. Процентите са сбор спрямо отчетения риск при всеки вход. Печалбите не увеличават дневния бюджет за загуби. Денят и седмицата се отчитат по софийско време.</p>
-    <div class="grid-2"><section class="panel"><h2>Лични граници</h2><form id="risk-plan" class="settings-form">${[["daily", "Дневен лимит на загубите (%)"], ["weekly", "Седмичен лимит на загубите (%)"], ["open", "Общ отворен риск (%)"], ["instrument", "Отворен риск за един инструмент (%)"]].map(([key, label]) => `<div class="form-field"><label for="risk-${key}">${label}</label><input id="risk-${key}" name="${key}" type="number" min="0.1" max="50" step="0.1" value="${plan[key]}" required></div>`).join("")}<button class="btn btn-outline">Запази границите</button></form>
+    <div class="grid-2"><section class="panel"><h2>Лични граници</h2><form id="risk-plan" class="settings-form">${[["daily", "Дневен лимит на загубите (%)"], ["weekly", "Седмичен лимит на загубите (%)"], ["open", "Общ отворен риск (%)"], ["instrument", "Отворен риск за един инструмент (%)"], ["currency", "Нетен риск към една валута (%)"]].map(([key, label]) => `<div class="form-field"><label for="risk-${key}">${label}</label><input id="risk-${key}" name="${key}" type="number" min="0.1" max="50" step="0.1" value="${plan[key]}" required></div>`).join("")}<button class="btn btn-outline">Запази границите</button></form>
       <p class="what">Началните стойности са ориентир. Лимитът предупреждава; не изпраща команди към брокера.</p></section>
     <section class="panel"><h2>Преди следващата сделка</h2><ul class="risk-tips"><li>Определи стопа преди обема. За начало 0.5% риск на сделка е разумна отправна точка; сайтът ограничава калкулатора до 1%.</li><li>Провери общия риск на всички позиции. Три сходни сделки могат да са един и същ залог.</li><li>Не увеличавай обема, за да върнеш загуба. След поредица от загуби прегледай дневника и условията на пазара.</li><li>Разграничавай лош резултат от неспазен план. Добре изпълнена сделка също може да загуби.</li><li>Провери свободния маржин, спреда и новините. Стопът не гарантира цената на изпълнение при гап.</li></ul></section></div>
     <section class="panel journal-panel"><h2>${editing ? "Промени записа" : "Добави сделка"}</h2><p class="what">Ръчно отчетена позиция, отделна от симулациите. Резултатът е след комисиони и суап, във валутата на дневника.</p>
+      ${similarOpenNotice(editing || JOURNAL.draft)}
       <form id="journal-form" class="journal-form"><input type="hidden" name="trade_id" value="${esc(editing?.id || "")}">
       <div class="form-field"><label>Инструмент<select name="pair">${FX.PAIR_KEYS.map((pair) => `<option ${pair === trade.pair ? "selected" : ""}>${pair}</option>`).join("")}</select></label></div>
       <div class="form-field"><label>Посока<select name="dir"><option value="1" ${trade.dir === 1 ? "selected" : ""}>Покупка</option><option value="-1" ${trade.dir === -1 ? "selected" : ""}>Продажба</option></select></label></div>

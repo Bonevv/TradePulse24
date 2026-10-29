@@ -115,6 +115,7 @@
 .verdict { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 800; border-radius: 6px; padding: 3px 8px; white-space: nowrap; }
 .verdict::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .v-good { color: #b2f0b3; background: #203a30; }
+.v-tested { color: #c9e7b4; background: #26352b; border: 1px dashed #4e7a52; }
 .v-weak { color: #f2d49b; background: #3d3627; }
 .v-bad { color: #ff9d9a; background: #3b292f; }
 .v-few { color: #a4b2bf; background: #27323e; }
@@ -409,6 +410,7 @@ table.data tr:last-child td { border-bottom: 0; }
 .signal-group>summary { cursor:pointer; display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center; }
 .signal-group>summary small { flex-basis:100%; color:var(--muted,#98a6b5); }
 .signal-group .sig-grid { margin-top:12px; }
+.sig-list .signal-group .sig-grid { grid-template-columns:1fr; }
 .entry-state { display:flex; flex-direction:column; gap:4px; margin:10px 0; padding:10px 12px; border-left:3px solid var(--accent,#c5f58c); background:#ffffff05; font-size:13px; }
 .entry-state span { color:var(--muted,#98a6b5); line-height:1.5; }
 .entry-stale,.entry-passed,.entry-expired { border-left-color:var(--amber,#e9bc6a); }
@@ -424,3 +426,35 @@ table.data tr:last-child td { border-bottom: 0; }
 .journal-form>.chips-row,.journal-form>.what { grid-column:1/-1; }
 @media(max-width:700px) { .partial-fields { grid-template-columns:repeat(2,minmax(0,1fr)); } .signal-group { padding:12px; } }
 .quote-time { display:block; margin-top:3px; color:var(--muted,#98a6b5); font-size:10px; font-weight:400; line-height:1.4; }
+
+/* Вход сега и видове поръчки */
+.entry-against { border-left-color:var(--amber,#e9bc6a); }
+.entry-now .entry-price-form { display:flex; flex-direction:column; gap:6px; margin:4px 0 6px; }
+.entry-now .entry-price-form label { font-size:12px; color:#c4d2d6; }
+.entry-price-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.entry-price-row input { flex:1 1 160px; min-width:0; max-width:220px; padding:9px 11px; border-radius:9px; border:1px solid #3a5049; background:#101922; color:#eef6f0; }
+.entry-verdict { display:flex; flex-direction:column; gap:3px; margin:12px 0 8px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:#ffffff06; }
+.entry-verdict strong { font-size:17px; }
+.entry-verdict span { color:var(--muted); font-size:13px; }
+.entry-go { border-color:#476042; background:#1d2c22; } .entry-go strong { color:var(--accent); }
+.entry-wait { border-color:#4b4430; background:#2b2a1f; } .entry-wait strong { color:#f2d49b; }
+.entry-warn { border-color:#5a4630; background:#2e251c; } .entry-warn strong { color:#f6cd8e; }
+.entry-stop { border-color:#5b3438; background:#2e1f23; } .entry-stop strong { color:#ff9d9a; }
+.entry-facts { margin:4px 0 10px; padding-left:18px; font-size:13px; color:#c9d5da; }
+.entry-facts li { margin:3px 0; }
+.order-ticket { margin:10px 0 4px; border:1px solid var(--line); border-radius:10px; background:#0f1720; padding:10px 12px; }
+.ticket-head { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; margin-bottom:6px; }
+.ticket-head strong { font-size:15px; color:var(--accent); } .ticket-head span { color:var(--muted); font-size:12px; }
+.order-ticket dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:5px 12px; margin:0; font-size:13px; }
+.order-ticket dt { color:#8fa0ad; } .order-ticket dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.order-ticket small { color:var(--muted); }
+.order-map { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0 6px; }
+.om-cell { border-radius:10px; padding:10px 12px; border:1px solid var(--line); display:flex; flex-direction:column; gap:2px; }
+.om-cell small { color:var(--muted); font-size:12px; }
+.om-buy { background:#1d2c22; border-color:#476042; } .om-buy strong { color:var(--accent); }
+.om-sell { background:#2e1f23; border-color:#5b3438; } .om-sell strong { color:#ff9d9a; }
+.om-price { grid-column:1/-1; text-align:center; padding:8px; border-top:2px dashed #7590a2; border-bottom:2px dashed #7590a2; color:#c9d5da; font-size:12px; }
+.order-guide details { border-top:1px solid var(--line); padding:10px 0; }
+.order-guide summary { cursor:pointer; font-weight:750; }
+.order-guide ol.rules { padding-left:20px; }
+@media(max-width:700px) { .order-ticket dl { grid-template-columns:1fr; gap:2px; } .order-ticket dt { margin-top:6px; } }

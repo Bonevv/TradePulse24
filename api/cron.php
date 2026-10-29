@@ -36,7 +36,7 @@ if (PHP_SAPI !== 'cli') {
               . "Отвори сайта в браузъра, копирай точния адрес от лентата и добави към него /api/cron.php?token=ТВОЯТ_CRON_TOKEN"
             : 'в адреса няма token. Сървърът получи: ?' . substr($qs, 0, 120);
     } elseif (!hash_equals($real, $token)) {
-        $why = 'token в адреса (' . strlen($token) . ' знака) не съвпада с cron_token в api/config.php (' . strlen($real) . ' знака). Провери за липсваща или излишна буква.';
+        $why = 'token в адреса не съвпада с cron_token в api/config.php. Провери за липсваща или излишна буква.';
     }
     if ($why !== null) {
         http_response_code(403);
@@ -70,34 +70,23 @@ $key = (string) cfg()['twelvedata_key'];
 if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
     $errors[] = 'Липсва ключ за Twelve Data в api/config.php. Цените не се обновяват.';
 } elseif (($meta['blocked_until'] ?? 0) > $now) {
-    $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след ' . ceil(($meta['blocked_until'] - $now) / 60) . ' мин.';
+    $errors[] = price_limit_message((int) $meta['blocked_until'] - $now);
 } else {
     $okCount = 0;
     foreach (PAIRS as $pair => [$symbol]) {
         try {
+            // След прекъсване теглим целия пропуск с припокриване, а не само последните 30 часа.
             $old = last_bars($pair, 'M15', 1);
-            $stale = !$old || $old[0][0] < $now - 4 * 86400;
             sleep($gap);
-            [$bars, $price, $priceTime] = twelve($pair, '15min', $stale ? 5000 : 120);
+            [$bars, $price, $priceTime] = twelve($pair, '15min', fetch_size($old ? (int) $old[0][0] : null, $now, 900, 120));
             merge_bars($pair, 'M15', $bars);
             if ($price && $priceTime) $meta['quotes'][$pair] = ['price' => $price, 'time' => $priceTime, 'fetched_at' => $now];
-            // Часовите свещи се сглобяват от 15-минутните (само завършени часове).
-            $hours = [];
-            foreach ($bars as [$t, $o, $h, $l, $c]) {
-                $k = $t - $t % 3600;
-                if (!isset($hours[$k])) {
-                    if ($t !== $k) continue;
-                    $hours[$k] = [$k, $o, $h, $l, $c];
-                } else {
-                    $hours[$k][2] = max($hours[$k][2], $h);
-                    $hours[$k][3] = min($hours[$k][3], $l);
-                    $hours[$k][4] = $c;
-                }
-            }
-            merge_bars($pair, 'H1', array_values(array_filter($hours, fn($b) => $b[0] + 3600 <= $now)));
+            // Часовите свещи се сглобяват от 15-минутните: само завършени часове с всичките им свещи.
+            merge_bars($pair, 'H1', hours_from_m15($bars, $now));
             if ($now - (int) ($meta['d1_updated'][$pair] ?? 0) >= 3 * 3600) {
+                $oldDay = last_bars($pair, 'D1', 1);
                 sleep($gap);
-                [$days] = twelve($pair, '1day', 15);
+                [$days] = twelve($pair, '1day', fetch_size($oldDay ? (int) $oldDay[0][0] : null, $now, 86400, 15));
                 merge_bars($pair, 'D1', $days);
                 $meta['d1_updated'][$pair] = $now;
             }
@@ -105,7 +94,7 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
             say("$symbol: " . count($bars) . ' нови 15-минутни свещи');
         } catch (RateLimited $e) {
             $meta['blocked_until'] = $now + 900;
-            $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след 15 мин.';
+            $errors[] = price_limit_message(900);
             say("$symbol: лимит на заявките, спирам");
             break;
         } catch (Throwable $e) {
@@ -114,6 +103,45 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
         }
     }
     if ($okCount) $meta['prices_updated'] = $now;
+
+    /* ------------------------------------------------------------ стари дупки */
+    // Най-много една допълнителна заявка на час, за да се пази квотата. Всяка дупка се проверява веднъж:
+    // ако източникът няма свещи за нея (празник, прекъсване при доставчика), тя остава отбелязана.
+    if ($okCount === count(PAIRS) && $now - (int) ($meta['gap_repair_at'] ?? 0) >= 3600) {
+        $checked = is_array($meta['gaps_checked'] ?? null) ? $meta['gaps_checked'] : [];
+        $todo = null;
+        foreach (PAIRS as $pair => [$symbol]) {
+            foreach (array_reverse(find_gaps(read_json(prices_file($pair, 'M15'), ['bars' => []])['bars'])) as [$from, $to]) {
+                $id = "$pair:$from-$to";
+                if (in_array($id, $checked, true)) continue;
+                if (!$todo || $to > $todo['to']) $todo = ['pair' => $pair, 'symbol' => $symbol, 'from' => $from, 'to' => $to, 'id' => $id];
+                break;
+            }
+        }
+        if ($todo) {
+            $meta['gap_repair_at'] = $now;
+            try {
+                sleep($gap);
+                [$bars] = twelve($todo['pair'], '15min', min(5000, intdiv($todo['to'] - $todo['from'], 900) + 8), gmdate('Y-m-d H:i:s', $todo['to']));
+                $bars = array_values(array_filter($bars, fn($b) => $b[0] <= $todo['to']));
+                $missing = count(array_filter($bars, fn($b) => $b[0] > $todo['from'] && $b[0] < $todo['to']));
+                if ($missing) {
+                    merge_bars($todo['pair'], 'M15', $bars);
+                    merge_bars($todo['pair'], 'H1', hours_from_m15($bars, $now));
+                }
+                say($todo['symbol'] . ': дупка от ' . gmdate('Y-m-d H:i', $todo['from']) . ' UTC — ' . ($missing ? "допълнени $missing свещи" : 'източникът няма свещи за този период'));
+                $checked[] = $todo['id'];
+            } catch (RateLimited $e) {
+                $meta['blocked_until'] = $now + 900;
+                $errors[] = price_limit_message(900);
+                say($todo['symbol'] . ': лимит на заявките при допълване на дупка');
+            } catch (Throwable $e) {
+                $checked[] = $todo['id'];
+                say($todo['symbol'] . ': дупката не е допълнена: ' . $e->getMessage());
+            }
+            $meta['gaps_checked'] = array_slice($checked, -400);
+        }
+    }
 }
 
 /* ---------------------------------------------------------------- новини */
@@ -134,10 +162,10 @@ if ($now - (int) ($meta['news_updated'] ?? 0) >= 3600) {
                 'source' => 'ForexFactory — седмичен календар',
                 'impact' => $impact[$e['impact'] ?? ''] ?? 'low', 'forecast' => (string) ($e['forecast'] ?? ''), 'previous' => (string) ($e['previous'] ?? '')];
         }
-        // Пазим и събитията от последните 10 дни, които вече не са във фийда.
+        // Пазим и събитията от последните 30 дни, които вече не са във фийда. По-старите могат да се изтеглят от „Новини“.
         $firstNew = $fresh ? min(array_column($fresh, 'time')) : $now;
         foreach (read_json(DATA_DIR . '/news.json', ['events' => []])['events'] as $e) {
-            if (!isset($fresh[$e['id']]) && $e['time'] >= $now - 10 * 86400 && $e['time'] < $firstNew) $fresh[$e['id']] = $e;
+            if (!isset($fresh[$e['id']]) && $e['time'] >= $now - NEWS_KEEP_DAYS * 86400 && $e['time'] < $firstNew) $fresh[$e['id']] = $e;
         }
         $events = array_values($fresh);
         usort($events, fn($a, $b) => $a['time'] <=> $b['time']);

@@ -11,7 +11,7 @@ function labMaintenancePanel() {
     <h3>Сървърно копие</h3><p class="what">Съдържа публикуваните резултати, собствените стратегии, черновите и разходите. Ключовете, паролите и ценовата история не се включват. Личните журнали имат отделни бутони за копие в своите раздели.</p>
     <div class="chips-row"><button class="btn btn-outline" data-maintenance="backup" ${LAB.maintenanceBusy ? "disabled" : ""}>Изтегли сървърно копие</button><label class="btn btn-outline">Възстанови копие<input id="server-backup-import" type="file" accept="application/json" hidden></label><button class="btn btn-outline" data-maintenance="installation" ${LAB.maintenanceBusy ? "disabled" : ""}>Провери файловете</button></div>
     ${check ? `<p class="${check.ok ? "pos" : "warn-line"}">${check.ok ? "Файловете съвпадат с пакета" : "Има липсващи или различни файлове"} · версия ${esc(check.release || "неизвестна")}</p>${check.files.filter((row) => row.state !== "ok").map((row) => `<p class="what">${esc(row.file)}: ${row.state === "missing" ? "липсва" : "различно съдържание"}</p>`).join("")}` : ""}
-    <p class="what">Преди запис на разходи, чернови и тестове се прави сървърно копие. Пазят се последните пет. Преди качване на нова версия изтегли копие и запази отделно api/config.php и api/config.local.php.</p></details>`;
+    <p class="what">Преди запис на разходи, чернови и тестове се прави сървърно копие. Еднакво съдържание не прави ново копие. Пазят се последните 10, по едно на ден за 14 дни и по едно на седмица за 8 седмици. Преди качване на нова версия изтегли копие и запази отделно api/config.php и api/config.local.php.</p></details>`;
 }
 
 function maintenanceRender() { if (["lab", "workshop"].includes(S.route.view)) render(); }

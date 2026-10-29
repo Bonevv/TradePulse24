@@ -88,8 +88,10 @@ function labRowStats(e) {
   const costNote = (e.cost_model || "model-v1") !== FX.costs.fingerprint(S.costProfile) ? '<small class="validation-note">Други разходи — нужен е нов тест.</small>' : "";
   const omitted = Object.values(e.data_quality?.omitted_days || {}).reduce((sum, n) => sum + n, 0);
   const validation = e.validation ? `<small class="validation-note">Отделен период: ${e.validation.holdout.trades} сделки · ${e.validation.holdout.avg_r == null ? "—" : fmtR(e.validation.holdout.avg_r)} средно${e.validation.passed ? " · потвърждава теста" : " · няма потвърждение"}${e.validation.note ? `<br>${esc(e.validation.note)}` : ""}${omitted ? `<br>Пропуснати непълни сесии по инструменти: ${omitted}.` : ""}</small>` : "";
-  const strong = strongPairs(e).map((p) => p.name);
-  const pairs = strong.length ? `<small class="validation-note pos">Силна за: ${esc(strong.join(", "))}</small>` : (e.per_pair || []).length ? `<small class="validation-note">Няма двойка „Силна“.</small>` : "";
+  const strong = strongPairs(e).map((p) => p.name), tested = testedPairs(e).map((p) => `${p.name} (${forwardText(p)})`);
+  const pairs = (strong.length ? `<small class="validation-note pos">Силна за: ${esc(strong.join(", "))}</small>` : "")
+    + (tested.length ? `<small class="validation-note">Силна в теста за: ${esc(tested.join(", "))}</small>` : "")
+    || ((e.per_pair || []).length ? `<small class="validation-note">Няма двойка „Силна“.</small>` : "");
   if (!s.trades) return `<td>${verdictBadge(s)}</td><td colspan="5" class="muted">няма сделки</td>`;
   return `<td>${verdictBadge(s)}${costNote}${pairs}${validation}</td><td class="num">${s.trades}</td><td class="num ${s.avg_r > 0 ? "pos" : "neg"}">${fmtR(s.avg_r)}</td>
     <td class="num">${s.profit_factor ?? "∞"}</td><td class="num">${fmtR(s.avg_first)} / ${fmtR(s.avg_second)}</td>
@@ -138,7 +140,7 @@ function labMain(mine = false) {
   });
   const visibleIds = new Set(all.map((v) => v.id));
   const tested = Object.keys(LAB.results).filter((id) => visibleIds.has(id)).length;
-  const good = Object.values(LAB.results).filter((e) => e && visibleIds.has(e.id) && (e.stats.verdict === "good" || strongPairs(e).length)).length;
+  const good = Object.values(LAB.results).filter((e) => e && visibleIds.has(e.id) && (e.stats.verdict === "good" || strongPairs(e).length || testedPairs(e).length)).length;
   const sel = LAB.selected.size;
   const p = LAB.progress;
   const loadBox = LAB.loaded
@@ -226,9 +228,16 @@ async function labLoadHistory() {
   }
 }
 
+/** Кога са замразени правилата на тази версия: краят на историята от първия ѝ тест. Нова версия започва отначало. */
+function labFrozen(id, strat) {
+  const version = strat?.version || strat?.spec?.version || 1;
+  const previous = [LAB.results[id], S.results?.entries?.[id]].find((e) => e && (e.version || 1) === version && FX.frozenAt(e) > 0);
+  return previous ? FX.frozenAt(previous) : 0;
+}
+
 function labRun() {
-  const allowed = new Set(labVariants().map((v) => v.id));
-  const items = [...LAB.selected].filter((id) => allowed.has(id)).map((id) => { const [key, tf] = splitId(id); return { key, tf }; });
+  const variants = new Map(labVariants().map((v) => [v.id, v]));
+  const items = [...LAB.selected].filter((id) => variants.has(id)).map((id) => { const [key, tf] = splitId(id); return { key, tf, frozen: labFrozen(id, variants.get(id).strat) }; });
   if (!items.length) return;
   LAB.running = true;
   LAB.progress = { done: 0, total: items.length, label: "започвам" };
@@ -516,7 +525,7 @@ document.addEventListener("click", (ev) => {
     else if (a === "publish") labSave(true);
     else if (a === "select-visible") { labVariants().filter((v) => S.route.view !== "workshop" || v.strat.origin === "custom").filter(labFilterMatch).forEach((v) => LAB.selected.add(v.id)); render(); }
     else if (a === "select-none") { LAB.selected.clear(); render(); }
-    else if (a === "publish-good") { for (const [id, e] of Object.entries(LAB.results)) if (e && (e.stats.verdict === "good" || strongPairs(e).length)) LAB.published.add(id); LAB.dirty = true; render(); }
+    else if (a === "publish-good") { for (const [id, e] of Object.entries(LAB.results)) if (e && (e.stats.verdict === "good" || strongPairs(e).length || testedPairs(e).length)) LAB.published.add(id); LAB.dirty = true; render(); }
     else if (a === "publish-none") { LAB.published.clear(); LAB.dirty = true; render(); }
     else if (a === "form-save") formSave(false);
     else if (a === "form-delete") { if (confirm("Да изтрия ли стратегията?")) formSave(true); }

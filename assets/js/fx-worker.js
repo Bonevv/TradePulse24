@@ -1,5 +1,5 @@
 /* Лабораторията тества стратегиите тук - в отделна нишка, за да не замръзва страницата. */
-importScripts("fx-core.js", "fx-costs.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-revisions.js", "fx-catalog.js", "fx-new-candidates.js", "fx-evaluation.js", "fx-engine.js");
+importScripts("fx-core.js", "fx-costs.js", "fx-indicators.js", "fx-series.js", "fx-backtest.js", "fx-strategies.js", "fx-builder.js", "fx-library.js", "fx-candidates.js", "fx-book-candidates.js", "fx-revisions.js", "fx-catalog.js", "fx-new-candidates.js", "fx-evaluation.js", "fx-entry.js", "fx-engine.js");
 
 let engine = null;
 let catalog = {};
@@ -29,7 +29,7 @@ onmessage = (ev) => {
       postMessage({ type: "custom_ok" });
     } else if (m.cmd === "run") {
       let k = 0;
-      for (const { key, tf } of m.items) {
+      for (const { key, tf, frozen } of m.items) {
         k++;
         const strat = catalog[key];
         if (!strat) { postMessage({ type: "warn", text: `Няма стратегия ${key}` }); continue; }
@@ -49,6 +49,10 @@ onmessage = (ev) => {
         }
         if (entry) {
           FX.reviewEntry(entry, strat, res, engine.now);
+          // Сделките след първия тест на тази версия: независимият период за потвърждение на „Силна“.
+          FX.addForward(entry, res.trades, Number(frozen) > 0 ? Number(frozen) : entry.pair_review.data_end);
+          // Какво става при вход по-късно или по-близо до стопа — по 15-минутните свещи, ако ги има.
+          FX.addEntryTiming(entry, res.trades, (pair) => engine.get(pair, "M15") || engine.get(pair, "H1"));
           if (strat.parent_key) {
             const parent = catalog[strat.parent_key], original = engine.trades(parent, tf);
             entry.parent_key = strat.parent_key;

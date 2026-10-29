@@ -42,9 +42,10 @@
 
   /* Оценка по двойка: същите думи като общата оценка, но само върху сделките на един инструмент.
      „Силна“ за двойката иска повече от общата: и последните 30% от историята, и двойния спред. */
-  FX.VERDICT_LABELS = { good: "Силна", weak: "Слаба", bad: "Не работи", few: "Недостатъчно сделки" };
+  FX.VERDICT_LABELS = { good: "Силна", tested: "Силна в теста", weak: "Слаба", bad: "Не работи", few: "Недостатъчно сделки" };
   FX.PAIR_VERDICT_REASON = {
-    good: "Поне 30 сделки, средно поне +0.08R след спреда, печалба ÷ загуба поне 1.15, печалба в двете половини на периода и в последните 30%, печалба и при двоен спред. Историческа оценка, не гаранция.",
+    good: "Покрива историческата проверка и има поне 30 сделки след теста, които не са много по-слаби от него. Не е гаранция за бъдещето.",
+    tested: "Поне 30 сделки, средно поне +0.08R след спреда, печалба ÷ загуба поне 1.15, печалба в двете половини, в последните 30% и при двоен спред. Това е историческа оценка: „Силна“ става след 30 сделки след теста.",
     weak: "На печалба за този инструмент, но не покрива всички проверки за „Силна“.",
     bad: "Губи на този инструмент след спреда.",
     few: "Под 30 сделки на този инструмент. Не може да се прецени.",
@@ -72,14 +73,62 @@
       stress_r: v(review.stress.avg_r), curve: thin(s.curve), verdict, verdict_label: FX.VERDICT_LABELS[verdict],
     };
   };
-  /** Оценка на ред без нов тест (стари резултати): без отделните проверки не може да е „Силна“. */
-  FX.rowVerdict = function (row) {
-    if (row?.verdict) return row.verdict;
-    if (!row || !(row.trades >= 30)) return "few";
-    return row.avg_r > 0 ? "weak" : "bad";
+  /* Потвърждение занапред. Историческият тест е правен върху вече разгледани данни; при много
+     тествани варианта част от тях изглеждат добре случайно. Затова „Силна“ иска и поне 30 сделки
+     след замразяването на правилата (края на историята от първия тест на версията). */
+  FX.FORWARD_MIN = 30;
+  FX.frozenAt = (entry) => entry?.frozen_at || entry?.pair_review?.data_end || entry?.stats?.end || 0;
+  /** Добавя към всеки ред сделките след frozenAt. Пуска се в Лабораторията върху цялата история. */
+  FX.addForward = function (entry, trades, frozenAt) {
+    entry.frozen_at = frozenAt;
+    for (const row of entry.per_pair || []) {
+      const closed = trades.filter((t) => t.pair === row.pair && t.status === "closed" && t.signal_time >= frozenAt);
+      const total = closed.reduce((sum, t) => sum + t.r, 0);
+      row.forward = { since: frozenAt, trades: closed.length, avg_r: closed.length ? FX.round(total / closed.length, 3) : null, total_r: FX.round(total, 2) };
+    }
+    return entry;
+  };
+  /** pending: още няма 30 сделки; confirmed: положителни и поне половината от теста; weaker; failed. */
+  FX.forwardState = function (row) {
+    const f = row?.forward, trades = f?.trades || 0, avg = f?.avg_r ?? null;
+    if (trades < FX.FORWARD_MIN) return { state: "pending", trades, avg_r: avg };
+    if (!(avg > 0)) return { state: "failed", trades, avg_r: avg };
+    if (row.avg_r > 0 && avg < row.avg_r / 2) return { state: "weaker", trades, avg_r: avg };
+    return { state: "confirmed", trades, avg_r: avg };
+  };
+  FX.FORWARD_REASON = {
+    failed: "Историческият тест е положителен, но поне 30 сделки след него са на загуба. Пусни нов анализ, преди да разчиташ на нея.",
+    weaker: "Сделките след теста са на печалба, но под половината от средния резултат в теста.",
   };
 
+  /** Оценка на ред без нов тест (стари резултати): без отделните проверки не може да е „Силна“. */
+  FX.rowVerdict = function (row) {
+    let verdict;
+    if (row?.verdict) verdict = row.verdict;
+    else if (!row || !(row.trades >= 30)) return "few";
+    else verdict = row.avg_r > 0 ? "weak" : "bad";
+    const strongInTest = verdict === "good" || row.historical_verdict === "good";
+    if (!strongInTest) return verdict;
+    const forward = FX.forwardState(row).state;
+    if (forward === "confirmed") return "good";
+    if (forward === "failed") return "bad";
+    if (forward === "weaker") return "weak";
+    return verdict === "good" ? "tested" : verdict;
+  };
+
+  /** Изборът за двойката; положителен исторически избор се спира, ако 30+ сделки след теста не го потвърждават. */
   FX.pairChoice = function (entry, pair, now) {
+    const choice = historicalChoice(entry, pair, now), row = entry?.per_pair?.find((p) => p.pair === pair);
+    if (!row || ["archived", "stale"].includes(choice.status)) return choice;
+    const forward = FX.forwardState(row);
+    if (choice.allowed && (forward.state === "failed" || forward.state === "weaker"))
+      return { status: forward.state === "failed" ? "bad" : "weak", allowed: false, label: forward.state === "failed" ? "Не се потвърди" : "По-слаба след теста", reason: FX.FORWARD_REASON[forward.state], forward };
+    if (forward.state === "confirmed" && (choice.allowed || row.historical_verdict === "good"))
+      return { status: "good", verdict: "good", allowed: true, label: "Силна", reason: FX.PAIR_VERDICT_REASON.good, forward };
+    return { ...choice, forward };
+  };
+
+  function historicalChoice(entry, pair, now) {
     if (entry?.retired) return { status: "archived", allowed: false, label: "Архив", reason: "Старите правила се пазят за сравнение и за вече следените сигнали." };
     const row = entry?.per_pair?.find((p) => p.pair === pair);
     if (!row) return { status: "few", allowed: false, label: "Няма тест", reason: "Нужен е тест от Лабораторията върху цялата история." };
@@ -93,7 +142,10 @@
       return { status: allowed ? "watch" : FX.rowVerdict(row), allowed, label: allowed ? "За наблюдение" : "За тест",
         reason: allowed ? "Покрива историческата проверка, но е избрана по вече разглеждани данни. Нужно е проследяване занапред." : "Този кандидат още не покрива проверката за инструмента." };
     }
-    if (row.verdict && FX.VERDICT_LABELS[row.verdict]) return { status: row.verdict, verdict: row.verdict, allowed: row.verdict === "good", label: FX.VERDICT_LABELS[row.verdict], reason: FX.PAIR_VERDICT_REASON[row.verdict] };
+    if (row.verdict && FX.VERDICT_LABELS[row.verdict]) {
+      const shown = row.verdict === "good" ? "tested" : row.verdict;
+      return { status: shown, verdict: shown, allowed: row.verdict === "good", label: FX.VERDICT_LABELS[shown], reason: FX.PAIR_VERDICT_REASON[shown] };
+    }
     if (entry.pair_review?.schema === 1 && row.assessment && entry.pair_review.version === (entry.version || 1)) return row.assessment;
     const allowed = row.trades >= 30 && row.avg_r >= .08;
     return { status: "unverified", allowed, label: "Непълна архивна проверка", reason: allowed ? "Положителен общ резултат и поне 30 сделки. Липсват отделните периоди и проверката на разходите; пусни нов тест." : "Архивът не покрива поне 30 сделки и 0.08R средно за този инструмент. Пусни нов тест за пълна оценка." };

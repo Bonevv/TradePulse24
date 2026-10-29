@@ -96,6 +96,57 @@
     return out;
   };
 
+  /* ---------------------------------------------------------- пазарни часове (Ню Йорк) */
+  // САЩ: лятно часово време от втората неделя на март 07:00 UTC до първата неделя на ноември 06:00 UTC.
+  const nyCache = {};
+  function nthSunday(year, month, n, hourUtc) {
+    const first = new Date(Date.UTC(year, month, 1, hourUtc, 0, 0));
+    first.setUTCDate(1 + ((7 - first.getUTCDay()) % 7) + (n - 1) * 7);
+    return first.getTime() / 1000;
+  }
+  FX.newYorkOffset = function (t) {
+    const y = new Date(t * 1000).getUTCFullYear();
+    const c = nyCache[y] || (nyCache[y] = [nthSunday(y, 2, 2, 7), nthSunday(y, 10, 1, 6)]);
+    return t >= c[0] && t < c[1] ? -14400 : -18000;
+  };
+  /** Нюйоркско време: ден от седмицата (нед = 0) и час. */
+  FX.newYork = function (t) {
+    const d = new Date((t + FX.newYorkOffset(t)) * 1000);
+    return { weekday: d.getUTCDay(), hour: d.getUTCHours() };
+  };
+  /** Валутният пазар работи от неделя 17:00 до петък 17:00 нюйоркско време. */
+  FX.marketOpenAt = function (t) {
+    const ny = FX.newYork(t);
+    return !(ny.weekday === 6 || (ny.weekday === 5 && ny.hour >= 17) || (ny.weekday === 0 && ny.hour < 17));
+  };
+  /** Златото има дневна почивка 17:00–18:00 нюйоркско време от понеделник до четвъртък. */
+  FX.goldBreakAt = function (t) {
+    const ny = FX.newYork(t);
+    return ny.weekday >= 1 && ny.weekday <= 4 && ny.hour === 17;
+  };
+  /** Първият петък 17:00 нюйоркско време след t: седмичното затваряне. */
+  FX.weekCloseAfter = function (t) {
+    const off = FX.newYorkOffset(t), local = t + off, d = new Date(local * 1000);
+    const dayStart = Math.floor(local / 86400) * 86400;
+    let close = dayStart + ((5 - d.getUTCDay() + 7) % 7) * 86400 + 17 * 3600;
+    if (close <= local) close += 7 * 86400;
+    return close - FX.newYorkOffset(close - off);
+  };
+
+  /**
+   * Последната 4-часова свещ е готова, когато има последния си час или когато пазарът
+   * е затворил за уикенда преди края ѝ. Иначе cron още не е донесъл всички часове и свещта
+   * се изчаква, за да не се появи сигнал, който после се променя. По-ранните свещи не се пипат.
+   */
+  FX.dropOpenH4 = function (h4, h1) {
+    if (!h4.length || !h1.length) return h4;
+    const last = h4[h4.length - 1], lastHour = h1[h1.length - 1][0];
+    if (lastHour < last[0] || lastHour >= last[0] + 3 * 3600) return h4;
+    const close = FX.weekCloseAfter(last[0]);
+    if (close < last[0] + 14400 && lastHour + 3600 >= close) return h4;
+    return h4.slice(0, -1);
+  };
+
   FX.toH4 = function (h1) {
     const out = [];
     let cur = null;

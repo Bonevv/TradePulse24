@@ -16,9 +16,11 @@ if ($real === '' || $real === DEFAULT_ADMIN_PASSWORD) {
 $raw = file_get_contents('php://input');
 if ($raw === false || strlen($raw) > 30 * 1024 * 1024) respond_json(['ok' => false, 'error' => 'Твърде голяма заявка'], 413);
 $in = json_decode($raw, true);
-if (!is_array($in) || !hash_equals($real, (string) ($in['password'] ?? ''))) {
-    sleep(1);
-    respond_json(['ok' => false, 'error' => 'Грешна парола'], 403);
+$denied = admin_login(cfg(), is_array($in) ? ($in['password'] ?? null) : null, (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), time());
+if ($denied !== null) {
+    if ($denied['status'] === 403) sleep(1);
+    if ($denied['retry']) header('Retry-After: ' . $denied['retry']);
+    respond_json(['ok' => false, 'error' => $denied['error']], $denied['status']);
 }
 
 $action = (string) ($in['action'] ?? '');

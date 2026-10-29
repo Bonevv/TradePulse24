@@ -59,19 +59,50 @@ function maintenance_snapshot(): array
     return ['format' => 'tradepulse24-server-backup', 'version' => 1, 'created' => time(), 'files' => $files];
 }
 
+const BACKUP_RECENT = 10; // последните копия
+const BACKUP_DAYS = 14;   // по едно копие на ден за толкова дни
+const BACKUP_WEEKS = 8;   // по едно копие на седмица за толкова седмици
+
 function maintenance_backup(string $reason): array
 {
     $snapshot = maintenance_snapshot();
     $dir = private_dir() . '/backups';
     if (!is_dir($dir) && !mkdir($dir, 0700) && !is_dir($dir)) throw new RuntimeException('Няма права за резервно копие.');
     $snapshot['reason'] = $reason;
+    $snapshot['hash'] = hash('sha256', json_encode($snapshot['files'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    $files = glob($dir . '/backup-*.json') ?: [];
+    rsort($files, SORT_STRING);
+    // Еднакво съдържание не създава ново копие, за да не изтласква по-старите.
+    $latest = $files ? read_json($files[0], []) : [];
+    if (($latest['hash'] ?? '') === $snapshot['hash']) return $snapshot;
     $microtime = microtime(true);
     $name = 'backup-' . gmdate('Ymd-His') . '-' . sprintf('%06d', (int) (($microtime - floor($microtime)) * 1000000)) . '-' . bin2hex(random_bytes(4)) . '.json';
     write_json($dir . '/' . $name, $snapshot);
-    $files = glob($dir . '/backup-*.json') ?: [];
-    rsort($files, SORT_STRING);
-    foreach (array_slice($files, 5) as $file) @unlink($file);
+    array_unshift($files, $dir . '/' . $name);
+    foreach (maintenance_backups_to_remove($files, time()) as $file) @unlink($file);
     return $snapshot;
+}
+
+/**
+ * Пазят се последните копия, най-новото за всеки от последните 14 дни и за всяка от последните 8 седмици.
+ * $files са подредени от най-новото; времето се чете от името backup-ГГГГММДД-ЧЧММСС-...
+ */
+function maintenance_backups_to_remove(array $files, int $now): array
+{
+    $keep = [];
+    $days = [];
+    $weeks = [];
+    foreach ($files as $i => $file) {
+        if (!preg_match('~backup-(\d{8})-(\d{6})~', basename($file), $m)) continue;
+        $time = strtotime($m[1] . 'T' . $m[2] . 'Z');
+        if ($time === false) continue;
+        if ($i < BACKUP_RECENT) $keep[$file] = true;
+        $day = gmdate('Y-m-d', $time);
+        $week = gmdate('o-W', $time);
+        if ($time >= $now - BACKUP_DAYS * 86400 && !isset($days[$day])) { $days[$day] = true; $keep[$file] = true; }
+        if ($time >= $now - BACKUP_WEEKS * 7 * 86400 && !isset($weeks[$week])) { $weeks[$week] = true; $keep[$file] = true; }
+    }
+    return array_values(array_filter($files, fn($file) => !isset($keep[$file])));
 }
 
 function maintenance_validate_backup(array $backup): array

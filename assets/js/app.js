@@ -7,9 +7,9 @@ const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", foll
 const MY_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CHF", "CAD", "NZD"];
 const CURRENCY_NAMES = { USD: "САЩ", EUR: "Еврозона", GBP: "Великобритания", JPY: "Япония", AUD: "Австралия", CHF: "Швейцария", CAD: "Канада", NZD: "Нова Зеландия", CNY: "Китай", ALL: "Всички" };
 const STYLE_NAMES = { day: "Дневна", swing: "Суинг" };
-const VERDICT_ORDER = { good: 0, weak: 1, few: 2, bad: 3 };
+const VERDICT_ORDER = { good: 0, tested: 1, weak: 2, few: 3, bad: 4 };
 const VERDICT_TIP = {
-  good: "Покрива критериите в историческия тест. Това не гарантира печалба занапред.",
+  good: "Покрива критериите в историческия тест. „Силна“ за отделна двойка става след 30 сделки след теста. Това не гарантира печалба занапред.",
   weak: "Печели малко или само в част от периода.",
   bad: "Губи след спреда.",
   few: "Няма достатъчно исторически сделки, за да се прецени.",
@@ -126,6 +126,8 @@ const watched = (id) => S.watch.has(id);
 const resolveSignal = (id) => (S.data?.signals || []).find((s) => s.id === id) || S.watch.get(id)?.snapshot || S.observed.records[id]?.latest || null;
 function quoteFresh(pair) {
   if (!S.data?.market?.open) return true;
+  // В дневната почивка на златото липсата на нова котировка е нормална.
+  if (pair === "XAUUSD" && S.data.market.gold_break) return true;
   const quoteTime = Number(S.meta?.quotes?.[pair]?.time);
   const maxAge = Math.max(70 * 60, (S.data?.settings?.refresh_minutes || 20) * 3 * 60);
   return quoteTime > 0 && now() - quoteTime <= maxAge && quoteTime <= now() + 60;
@@ -143,6 +145,9 @@ function watchButton(sig, extra = "") {
 const pairRow = (e, pair) => (e?.per_pair || []).find((p) => p.pair === pair) || null;
 const pairVerdict = (e, pair) => FX.rowVerdict(pairRow(e, pair));
 const strongPairs = (e) => (e?.per_pair || []).filter((p) => FX.rowVerdict(p) === "good");
+/** Силни в историческия тест, които още чакат 30 сделки след него. */
+const testedPairs = (e) => (e?.per_pair || []).filter((p) => FX.rowVerdict(p) === "tested");
+const forwardText = (row) => { const f = FX.forwardState(row); return `${f.trades}/${FX.FORWARD_MIN} сделки след теста${f.avg_r == null ? "" : ` · средно ${fmtR(f.avg_r)}`}`; };
 /** Най-добрата оценка сред двойките; без данни по двойки - общата. */
 function bestVerdict(e) {
   const rows = e.per_pair || [];
@@ -165,6 +170,8 @@ function pairBadge(e, pair) {
 function headlineBadge(e) {
   const strong = strongPairs(e);
   if (strong.length) return `<span class="verdict v-good" title="${esc(FX.PAIR_VERDICT_REASON.good)}">Силна за ${strong.length === 1 ? esc(strong[0].name) : `${strong.length} двойки`}</span>`;
+  const tested = testedPairs(e);
+  if (tested.length) return `<span class="verdict v-tested" title="${esc(FX.PAIR_VERDICT_REASON.tested)}">Силна в теста за ${tested.length === 1 ? `${esc(tested[0].name)} · ${esc(forwardText(tested[0]))}` : `${tested.length} двойки`}</span>`;
   const v = bestVerdict(e);
   return `<span class="verdict v-${esc(v)}" title="Най-добрата оценка сред двойките. ${esc(FX.PAIR_VERDICT_REASON[v] || "")}">${FX.VERDICT_LABELS[v] || "Няма оценка"}</span>`;
 }
@@ -194,25 +201,29 @@ function mySignals({ all = false } = {}) {
 const signalPairChoice = (sig) => FX.pairChoice(stratById(sig.strategy), sig.pair, now());
 function pairSignalVisible(sig) {
   if (sig.retired && !watched(sig.id)) return false;
-  return !S.settings.smartPairs || !isCurrent(sig) || watched(sig.id) || signalPairChoice(sig).allowed;
+  if (!S.settings.smartPairs || !isCurrent(sig) || watched(sig.id)) return true;
+  // Подборът скрива и новите модели, при които разходите са над 20% от риска. Вече достигнатите остават видими.
+  if (sig.status === "pending" && costHeavy(sig)) return false;
+  return signalPairChoice(sig).allowed;
 }
 function pairChoiceText(entry) {
-  const names = strongPairs(entry).map((p) => p.name);
-  const overall = `Общо за всички двойки: ${FX.VERDICT_LABELS[entry.stats.verdict] || "няма оценка"}.`;
-  return names.length ? `Силна за: ${names.join(", ")}. ${overall}` : `Няма двойка с оценка „Силна“. ${overall}`;
+  const names = strongPairs(entry).map((p) => p.name), tested = testedPairs(entry).map((p) => p.name);
+  const overall = `Общо за всички двойки: ${(entry.stats.verdict === "good" ? FX.VERDICT_LABELS.tested : FX.VERDICT_LABELS[entry.stats.verdict]) || "няма оценка"}.`;
+  const waiting = tested.length ? ` Силна в теста, чака ${FX.FORWARD_MIN} сделки след него: ${tested.join(", ")}.` : "";
+  return (names.length ? `Силна за: ${names.join(", ")}.` : "Няма двойка с потвърдена оценка „Силна“.") + waiting + " " + overall;
 }
 function pairTable(entry) {
   const r = (v) => Number.isFinite(v) ? fmtR(v) : "—";
   const rows = [...entry.per_pair].sort((a, b) => (VERDICT_ORDER[FX.rowVerdict(a)] - VERDICT_ORDER[FX.rowVerdict(b)]) || ((b.avg_r ?? -9) - (a.avg_r ?? -9)));
-  return `<p class="what">${esc(pairChoiceText(entry))} Всяка двойка се оценява само по своите сделки. Процентът печеливши сам по себе си не решава оценката.</p>
-    <div class="table-wrap"><table class="data pair-review-table"><thead><tr><th>Двойка</th><th>Оценка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Печалба ÷ загуба</th><th class="num">Общо</th><th class="num">Последни 30%</th><th class="num">Двоен спред</th></tr></thead><tbody>
+  return `<p class="what">${esc(pairChoiceText(entry))} Всяка двойка се оценява само по своите сделки. Процентът печеливши сам по себе си не решава оценката. „След теста“ са сделките след замразяването на правилата; обновяват се при нов тест в Лабораторията.</p>
+    <div class="table-wrap"><table class="data pair-review-table"><thead><tr><th>Двойка</th><th>Оценка</th><th class="num">Сделки</th><th class="num">Печеливши</th><th class="num">Среден</th><th class="num">Печалба ÷ загуба</th><th class="num">Общо</th><th class="num">Последни 30%</th><th class="num">Двоен спред</th><th class="num">След теста</th></tr></thead><tbody>
     ${rows.map((p) => {
       const v = FX.rowVerdict(p), ho = p.holdout || (p.review ? [p.review.holdout.trades, p.review.holdout.avg_r] : null), stress = p.stress_r ?? p.review?.stress.avg_r;
       const years = p.review?.years ? `<p class="what">${p.review.years.map((y) => `${y.year}: ${y.trades} / ${r(y.avg_r)}`).join(" · ")}</p>` : "";
       const pf = p.profit_factor == null ? (p.trades ? "∞" : "—") : F.num(2).format(p.profit_factor);
       return `<tr><td>${esc(p.name)}</td><td><details><summary><span class="verdict v-${esc(v)}">${FX.VERDICT_LABELS[v]}</span></summary><p class="what">${esc(FX.PAIR_VERDICT_REASON[v])}</p>${years}</details></td>
         <td class="num">${p.trades}</td><td class="num">${p.win_rate == null ? "—" : F.num(0).format(p.win_rate) + "%"}</td><td class="num ${p.avg_r >= 0 ? "pos" : "neg"}">${r(p.avg_r)}</td><td class="num">${pf}</td><td class="num">${r(p.total_r)}</td>
-        <td class="num">${ho ? `${ho[0]} / ${r(ho[1])}` : "—"}</td><td class="num">${r(stress)}</td></tr>`;
+        <td class="num">${ho ? `${ho[0]} / ${r(ho[1])}` : "—"}</td><td class="num">${r(stress)}</td><td class="num">${p.forward ? `${p.forward.trades} / ${r(p.forward.avg_r)}` : "—"}</td></tr>`;
     }).join("")}</tbody></table></div>`;
 }
 
@@ -326,6 +337,25 @@ function sizing(pair, order) {
   return res;
 }
 
+/* ------------------------------------------------------------ разходи спрямо стопа */
+
+// При малък стоп спредът, комисионата и приплъзването изяждат голяма част от 1R. Суапът зависи от държането и не влиза тук.
+const COST_LIMIT = 0.2;
+function costShare(sig) {
+  const info = pairInfo(sig.pair), pipCost = (Number(info.spread) || 0) + (Number(info.costs?.commission) || 0) + (Number(info.costs?.slippage) || 0);
+  const shares = (ordersOf(sig) || []).map((o) => {
+    const risk = Math.abs(Number(o.entry) - Number(o.stop));
+    return Number.isFinite(risk) && risk > 0 ? (pipCost * info.pip) / risk : Infinity;
+  });
+  return shares.length ? Math.max(...shares) : null;
+}
+const costHeavy = (sig) => isCurrent(sig) && (costShare(sig) ?? 0) > COST_LIMIT;
+function costNotice(sig) {
+  if (!costHeavy(sig)) return "";
+  const share = costShare(sig);
+  return `<div class="warn-line">⚠ Спредът, комисионата и приплъзването са ${Number.isFinite(share) ? F.num(0).format(share * 100) + "%" : "почти целия риск"} от риска до стопа. При толкова малък стоп разходите изяждат голяма част от резултата.</div>`;
+}
+
 const lots = (v) => `${F.num(2).format(v)} лота`;
 
 /* ------------------------------------------------------------ малки компоненти */
@@ -353,9 +383,10 @@ function statusInfo(sig) {
   return { cls, label, text: `Приключи ${when(sig.exit_time)} с резултат ${fmtR(sig.r)} (${rMoney(sig.r)}).` };
 }
 
+/** Общата оценка е само историческа; потвърждението занапред е по двойки. */
 function verdictBadge(stats) {
-  const names = { good: "Силна", weak: "Слаба", bad: "Не работи", few: "Недостатъчно сделки" };
-  return `<span class="verdict v-${esc(stats.verdict)}" title="${esc(VERDICT_TIP[stats.verdict] || "")}">${names[stats.verdict] || "Няма оценка"}</span>`;
+  const names = { good: "Силна в теста", weak: "Слаба", bad: "Не работи", few: "Недостатъчно сделки" };
+  return `<span class="verdict v-${stats.verdict === "good" ? "tested" : esc(stats.verdict)}" title="${esc(VERDICT_TIP[stats.verdict] || "")}">${names[stats.verdict] || "Няма оценка"}</span>`;
 }
 
 function impactPill(impact) {
@@ -419,6 +450,7 @@ function signalCard(sig) {
     ${body}
     ${news ? `<div class="warn-line">⚠ Силна новина за ${esc(news.currency)} ${rel(news.time)}: ${esc(news.title_bg)}</div>` : ""}
     ${freshnessNotice(sig)}
+    ${costNotice(sig)}
     <div class="sig-foot">${sizeText}<span>${foot} →</span></div></a>
     <div class="sig-watch-actions">${watchButton(sig)}<a href="#/signal/${encodeURIComponent(sig.id)}" class="btn btn-quiet btn-sm">Подробности</a></div>
   </article>`;
@@ -701,7 +733,7 @@ function viewDashboard() {
   const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
   const highToday = newsFor(MY_CURRENCIES, now(), todayEnd.getTime() / 1000, ["high"]).length;
   const upcoming = newsFor(MY_CURRENCIES, now() - 30 * 60, now() + 48 * 3600, ["high"]).slice(0, 6);
-  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => bestVerdict(s) === "good" || bestVerdict(s) === "weak").slice(0, 3);
+  const best = sortedStrategies().filter((s) => styleOk(s.style)).filter((s) => ["good", "tested", "weak"].includes(bestVerdict(s))).slice(0, 3);
   const bestLine = (e) => {
     const p = bestPairRow(e), x = p || e.stats;
     return `${p ? `${esc(p.name)}: ` : ""}${F.num(0).format(x.win_rate || 0)}% печеливши · средно ${fmtR(x.avg_r || 0)} на сделка · ${x.trades} сделки`;
@@ -710,7 +742,11 @@ function viewDashboard() {
   let sigBody;
   if (!followedCount) sigBody = emptyBox("◈", "Не следваш нито една стратегия", "Избери поне една стратегия и тук ще виждаш нейните сигнали.", `<a class="btn btn-primary" href="#/strategies">Към стратегиите ↗</a>`);
   else if (!current.length) sigBody = emptyBox("⌁", "В момента няма сигнали", `Стратегиите, които следваш, нямат сигнал точно сега. Цените се проверяват на всеки ${d.settings?.refresh_minutes || 10} минути и новите сигнали се появяват тук.`, `<a class="btn btn-outline" href="#/signals">Виж последните приключили ↗</a>`);
-  else sigBody = `<div class="sig-list">${current.slice(0, 6).map(signalCard).join("")}</div>`;
+  else {
+    // Както в „Сигнали“: няколко сходни сигнала за една двойка са един ред, който се разгъва. Лимитът е 6 групи.
+    const more = FX.signalTools.group(current).length - 6;
+    sigBody = `<div class="sig-list">${signalGroups(current, 6)}</div>${more > 0 ? `<p class="muted-small" style="margin-top:10px"><a class="text-link" href="#/signals">Още ${more} ${more === 1 ? "група" : "групи"} в „Сигнали“ <span>↗</span></a></p>` : ""}`;
+  }
   return `
     ${S.settings.balance ? profileStrip() : onboardingCard()}
     <div class="metrics-grid">
@@ -768,7 +804,7 @@ function viewSignals() {
         <button class="chip ${S.showAll ? "active" : ""}" data-showall>${S.showAll ? "✓ " : ""}И от стратегии, които не следвам</button></div>
       <label class="search-wrap"><span>⌕</span><input type="search" id="pair-search" value="${esc(S.pairQuery)}" placeholder="Търси двойка, напр. EUR/USD" aria-label="Търси двойка"></label></div>
     ${S.sigFilter === "done" && closedOnly.length ? `<div class="warn-line info" style="margin:0 0 14px">Последни 14 дни: ${closedOnly.length} сделки, общо ${fmtR(sumR)} (${rMoney(sumR)} при твоя риск). Сделките, които не са се активирали, не носят загуба.</div>` : ""}
-    <p class="what">${S.settings.smartPairs ? `Показват се сигнали само за двойките, на които стратегията е „Силна“. ${hidden} текущи модела са скрити заради оценката за съответната двойка. Следените сигнали остават достъпни.` : "Подборът по двойки е изключен: показват се сигнали за всички двойки."} <a href="#/settings">Настройки</a></p>
+    <p class="what">${S.settings.smartPairs ? `Показват се сигнали само за двойките, на които стратегията е „Силна“. ${hidden} текущи модела са скрити заради оценката за съответната двойка или защото разходите са над ${COST_LIMIT * 100}% от риска до стопа. Следените сигнали остават достъпни.` : "Подборът по двойки е изключен: показват се сигнали за всички двойки."} <a href="#/settings">Настройки</a></p>
     ${body}`;
 }
 
@@ -828,7 +864,7 @@ function stepsFor(sig) {
     if (sig.half && cells.length > 1) steps.push(["Частичен изход по модела", "Първата част е отчетена като затворена. Провери изпълнението си при брокера и стопа на оставащата позиция."]);
     if (stopChanged) steps.push(["Провери новия стоп", `Стопът по модела е преместен от ${px(sig.pair, sig.stop0)} на ${px(sig.pair, sig.stop)} според правилото. Провери дали реалната ти позиция има същия стоп. Не го отдалечавай.`]);
     else if (customExit) steps.push(["Не мести стопа само заради 1R/2R", "1R и 2R са ориентири. Стопът се променя само когато условието на тази стратегия действително е изпълнено."]);
-    steps.push(["Ако не си влязъл", "Не гони цената. Пропусни този сигнал и изчакай следващия."]);
+    steps.push(["Ако не си влязъл", "Не гони цената. В „Мога ли да вляза сега?“ по-горе е казано дали може, докъде да изчакаш и коя поръчка да ползваш."]);
     return steps;
   }
   if (sig.status !== "pending") return [];
@@ -902,10 +938,12 @@ function viewSignal(id) {
       <p>${strat ? `Стратегия: <a class="link" href="#/strategy/${esc(strat.id)}">${esc(strat.name)} · ${esc(strat.tf_label)}</a> ${pairBadge(strat, sig.pair)}` : ""}</p></div>
       <div class="chips-row">${watchButton(sig)}<button type="button" class="btn btn-quiet btn-sm" id="copy-plan">Копирай плана</button></div></div>
     ${freshnessNotice(sig)}
+    ${costNotice(sig)}
     ${watchDetail(sig)}
     <div class="panel signal-personal"><h3>Твоята сделка</h3><p class="what">Ако си влязъл при брокера, добави реалния вход и обем в личния дневник.</p><div class="chips-row">${ordersOf(sig).map((order) => `<button type="button" class="btn btn-outline" data-journal-signal="${esc(sig.id)}" data-journal-dir="${order.dir}">Запиши ${order.dir === 1 ? "покупка" : "продажба"}</button>`).join("")}</div></div>
     ${signalAvailability(sig)}${conflictNotice(sig.pair)}
     <div class="status-box ${boxCls}"><strong>${esc(st.label)}.</strong> ${esc(st.text)}</div>
+    ${entryNowPanel(sig)}
     <div class="detail-grid"><div class="detail-column">
       <section class="panel trade-plan-panel"><div class="panel-head"><div><p class="kicker">НИВА</p><h3>${orders.length > 1 ? "Две възможни посоки" : "Вход, стоп и цели"}</h3></div><span class="pill pill-neutral">${esc(sig.tf_label)}</span></div>
         ${orders.map((o) => `${orders.length > 1 ? `<div class="order-title" style="margin-top:10px">${o.dir === 1 ? "▲ Покупка" : "▼ Продажба"}</div>` : ""}
@@ -1071,6 +1109,8 @@ function viewNews() {
           <div class="news-nums">${actual ? `Обявено: <b>${esc(e.actual)}</b><br>` : ""}${e.forecast != null && e.forecast !== "" ? `Очаквано: <b>${esc(e.forecast)}</b><br>` : ""}${e.previous != null && e.previous !== "" ? `Предишно: <b>${esc(e.previous)}</b>` : ""}</div>
         </article>`;
       }).join("") : emptyBox("◷", past && !S.newsShowPast ? "Няма повече предстоящи събития за тази дата" : "Няма събития за тази дата и филтър", past && !S.newsShowPast ? `Скрити са ${past} минали събития. Можеш да ги покажеш за проверка или да избереш друга дата.` : "Избери друга дата или промени важността и валутите.", next && cal.dayKey(next.time) !== selected.selected ? `<button class="btn btn-outline" data-news-next="${esc(cal.dayKey(next.time))}">Виж следващото събитие →</button>` : "")}
+      <div class="chips-row news-download"><button type="button" class="tiny-btn" data-news-download="csv">Изтегли новините (CSV за Excel)</button><button type="button" class="tiny-btn" data-news-download="json">Изтегли новините (JSON)</button></div>
+      <p class="what">Сайтът пази миналите събития 30 дни. За по-дълга история изтегляй копие редовно.</p>
       <p class="disclaimer">Източник: ${esc(S.data?.sources?.news || "ForexFactory")}. Календарът е обновен ${updated ? esc(cal.time(updated)) + " · " + esc(cal.dayKey(updated).split("-").reverse().join(".")) : "в неизвестен час"} · Europe/Sofia. Показва се наличната седмица; липсващият резултат остава неизвестен.</p>
     </section>`;
 }
@@ -1098,7 +1138,7 @@ function viewSettings() {
 </div>
             <span class="what"><strong>Дневна</strong>: M15/H1. Новите кандидати приключват до 22:00 Europe/Sofia; конкретният час е в правилата. <strong>Суинг</strong>: H4/D1, с държане през няколко сесии. Архивните варианти запазват старите си правила.</span></div>
           <div class="form-field"><label><input type="checkbox" name="smartPairs" ${st.smartPairs ? "checked" : ""}> Показвай сигнали само за подбраните инструменти</label>
-            <span class="what">Използва оценката на конкретната двойка. Допуска исторически силните и кандидатите, които покриват проверката за наблюдение. Стари оценки и резултати с други разходи се пропускат. Следените сигнали остават видими.</span></div>
+            <span class="what">Използва оценката на конкретната двойка. Допуска исторически силните и кандидатите, които покриват проверката за наблюдение. Стари оценки и резултати с други разходи се пропускат. Скрива и новите модели, при които спредът, комисионата и приплъзването са над ${COST_LIMIT * 100}% от риска до стопа. Следените сигнали остават видими.</span></div>
           <div class="chips-row"><button type="submit" class="btn btn-primary">Запази</button><a class="btn btn-outline" href="#/strategies">Избери стратегии (${followedInStyle().length}) ↗</a></div>
         </form></section>
       <section class="panel settings-aside"><div class="big-shield">◇</div><h3>Как се смята обемът</h3>
@@ -1128,7 +1168,7 @@ function viewHelp() {
         <details><summary>Стоп (Stop Loss)</summary><p>Цената, на която сделката се затваря автоматично на загуба. Задължителен е. Никога не го мести по-далеч.</p></details>
         <details><summary>Цел (Take Profit)</summary><p>Цената, на която сделката се затваря автоматично на печалба. Някои стратегии имат една или две цели, други излизат по индикатор или в определен час. Точното правило е към сигнала.</p></details>
         <details><summary>R (единица риск)</summary><p>R е рискът ти на една сделка. Ако рискуваш $10, +1R = +$10, −1R = −$10, +0.5R = +$5. Така стратегиите се сравняват независимо от размера на сметката.</p></details>
-        <details><summary>Buy Stop / Sell Stop</summary><p>Отложена поръчка. Buy Stop купува, когато цената се качи до нивото. Sell Stop продава, когато цената слезе до нивото. Така влизаш само ако пазарът потвърди посоката.</p></details>
+        <details><summary>Buy Stop / Sell Stop</summary><p>Отложена поръчка. Buy Stop купува, когато цената се качи до нивото. Sell Stop продава, когато цената слезе до нивото. Така влизаш само ако пазарът потвърди посоката. Всички видове поръчки и как се попълват са в „Видове поръчки“ по-долу.</p></details>
         <details><summary>Спред</summary><p>Разликата между цената за купуване и за продаване. Това е таксата на брокера. В тестовете е изваден от всяка сделка.</p></details>
         <details><summary>Дневна и суинг търговия</summary><p>Дневната търговия използва M15/H1. Новите дневни варианти приключват в същия ден, а часът е в правилата. Суинг търговията ползва графики 4 часа и 1 ден, а сделките се държат дни или седмици.</p></details>
         <details><summary>Спад (drawdown)</summary><p>Колко е паднала сметката от най-високата си точка до най-ниската след нея. Показва колко болезнен може да е лош период.</p></details>
@@ -1153,7 +1193,8 @@ function viewHelp() {
             <li>Това не е инвестиционен съвет. Ти решаваш дали и как да търгуваш.</li>
           </ul></section>
       </div>
-    </div>`;
+    </div>
+    ${orderGuide()}`;
 }
 
 /* ------------------------------------------------------------ рамка, маршрути */
@@ -1418,6 +1459,8 @@ function planText(sig) {
   const strat = stratById(sig.strategy);
   if (ownExit(strat) && strat.exit_rules?.length) lines.push(`Правило за изход: ${strat.exit_rules.join(" ")}`);
   if (sig.status === "pending" && ordersOf(sig)[0].type !== "market") lines.push(`Важи до: ${when(sig.valid_until)}`);
+  const entryLine = isCurrent(sig) ? entryPlanLine(sig) : null;
+  if (entryLine) lines.push(entryLine);
   lines.push("Не е инвестиционен съвет.");
   return lines.join("\n");
 }
