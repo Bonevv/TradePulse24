@@ -8,16 +8,28 @@ function recordObservedSignals() {
   S.observed.ingest(signals.filter((sig) => quoteFresh(sig.pair)), now(), (sig) => styleOk(sig.style) && isFollowed(sig.strategy) && pairSignalVisible(sig));
 }
 
-/** Един инструмент заема един ред. Посоките и състоянията остават отделни вътре. */
+/** Един инструмент — една група. Картите се виждат веднага: най-добрият вариант за всяка посока е отгоре,
+    а останалите варианти за същия инструмент са под „Още“. */
 function signalGroups(signals, limit = Infinity) {
+  const rank = (sig) => VERDICT_ORDER[ratingOf(stratById(sig.strategy), sig.pair)] ?? 9;
+  const side = (sig) => FX.signalTools.directions(sig).slice().sort().join(",");
   return FX.signalTools.group(signals).slice(0, limit).map((group) => {
+    const ordered = group.signals.slice().sort((a, b) => (isCurrent(b) - isCurrent(a)) || rank(a) - rank(b) || (b.signal_time - a.signal_time));
+    const shown = [], seen = new Set();
+    for (const sig of ordered) if (!seen.has(side(sig))) { seen.add(side(sig)); shown.push(sig); }
+    const rest = ordered.filter((sig) => !shown.includes(sig));
+    if (ordered.length === 1) return `<div class="signal-group single" data-signal-group="${esc(group.pair)}">${signalCard(ordered[0])}</div>`;
     let buy = 0, sell = 0, both = 0;
-    for (const sig of group.signals) { const dirs = FX.signalTools.directions(sig); if (dirs.length > 1) both++; else if (dirs[0] === 1) buy++; else sell++; }
-    const side = [buy ? `${buy} за покупка` : "", sell ? `${sell} за продажба` : "", both ? `${both} с две посоки` : ""].filter(Boolean).join(" · ");
-    const pending = group.signals.filter((sig) => sig.status === "pending").length;
+    for (const sig of ordered) { const dirs = FX.signalTools.directions(sig); if (dirs.length > 1) both++; else if (dirs[0] === 1) buy++; else sell++; }
+    const sides = [buy ? `${buy} за покупка` : "", sell ? `${sell} за продажба` : "", both ? `${both} с две посоки` : ""].filter(Boolean).join(" · ");
+    const pending = ordered.filter((sig) => sig.status === "pending").length;
     const name = group.pair === "XAUUSD" ? "Злато · XAU/USD" : FX.PAIRS[group.pair].name;
-    return `<details class="signal-group" data-signal-group="${esc(group.pair)}"><summary><strong>${esc(name)}</strong><span>${group.signals.length} ${group.signals.length === 1 ? "сигнал" : "сигнала"} · ${STYLE_NAMES[group.style]}</span><small>${side} · ${pending} чакат вход</small></summary>
-      <p class="what">Всеки вариант има свой вход, стоп и изход. Броят сигнали не е брой независими потвърждения. Общият риск се смята от реалните позиции в дневника.</p><div class="sig-grid">${group.signals.map((sig) => `<div class="group-signal">${signalCard(sig)}<button type="button" class="tiny-btn" data-model-focus="${esc(sig.id)}">Виж на графиката ↗</button></div>`).join("")}</div></details>`;
+    const opposed = buy && sell ? `<p class="warn-line">⚠ Вариантите за ${esc(name)} сочат в различни посоки. Не отваряй и двете.</p>` : "";
+    return `<section class="signal-group" data-signal-group="${esc(group.pair)}">
+      <div class="signal-group-head"><strong>${esc(name)}</strong><span>${ordered.length} сигнала · ${STYLE_NAMES[group.style]}</span><small>${sides}${pending ? ` · ${pending} чакат вход` : ""}. Всеки вариант има свой вход, стоп и изход; няколко сигнала не са няколко потвърждения.</small></div>
+      ${opposed}<div class="sig-grid">${shown.map(signalCard).join("")}</div>
+      ${rest.length ? `<details class="group-more"><summary>Още ${rest.length} ${rest.length === 1 ? "вариант" : "варианта"} за ${esc(name)}</summary><div class="sig-grid">${rest.map(signalCard).join("")}</div></details>` : ""}
+    </section>`;
   }).join("");
 }
 

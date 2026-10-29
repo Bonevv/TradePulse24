@@ -303,7 +303,6 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert page.evaluate('mySignals().map(s=>s.pair)') == ['USDJPY','XAUUSD']
             assert '1 текущи модела са скрити' in page.locator('#main').inner_text()
             # Без 30 сделки след теста историческата оценка остава „Силна в теста“.
-            page.locator('[data-signal-group="USDJPY"] > summary').click()
             assert 'Силна в теста за USD/JPY' in page.locator('#main').inner_text()
             page.evaluate("S.watch.add(S.data.signals[0]); render();")
             assert page.evaluate('mySignals().length') == 3, "Followed signal remains available after exclusion by instrument"
@@ -431,9 +430,10 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
               location.hash='#/signals';render();
             }""")
             assert page.locator('.signal-group').count() == 1
-            assert "2 сигнала" in page.locator('.signal-group summary').inner_text()
+            assert "2 сигнала" in page.locator('.signal-group .signal-group-head').inner_text()
             assert "Посоките се разминават" in page.locator('#main').inner_text()
-            page.locator('.signal-group summary').click()
+            assert page.locator('.signal-group > .sig-grid > .sig-card').count() == 1, "The best variant is visible without expanding"
+            page.locator('.signal-group .group-more > summary').click()
             assert page.locator('.signal-group .sig-card').count() == 2
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Grouped signals overflow mobile viewport"
             page.evaluate("""() => {

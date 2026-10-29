@@ -17,6 +17,43 @@ const MC_FMT = {
 };
 const MC_NOTICE = "TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc.";
 
+/* ------------------------------------------------------------ вид на графиката */
+
+// Под тази ширина „Автоматично“ показва опростената графика (телефон).
+const CHART_PHONE_WIDTH = 760;
+const CHART_LIBRARY = "assets/vendor/lightweight-charts/lightweight-charts.standalone.production.js?v=5.2.1";
+
+/** "interactive" (TradingView) или "simple" (леко изображение) според настройката и ширината на екрана. */
+function chartMode() {
+  const mode = S.settings.chartMode || "auto";
+  if (mode === "interactive" || mode === "simple") return mode;
+  return (window.innerWidth || 1000) < CHART_PHONE_WIDTH ? "simple" : "interactive";
+}
+
+/** Библиотеката се тегли само когато е нужна интерактивна графика. Липсващ файл не спира сайта. */
+function loadChartLibrary() {
+  if (window.LightweightCharts?.createChart) { MC.lib = "ready"; return; }
+  if (MC.lib === "loading" || MC.lib === "failed") return;
+  MC.lib = "loading";
+  const script = document.createElement("script");
+  script.src = CHART_LIBRARY; script.async = true; script.setAttribute("data-optional", "");
+  script.onload = () => { MC.lib = window.LightweightCharts?.createChart ? "ready" : "failed"; mountModelChart(); };
+  script.onerror = () => { MC.lib = "failed"; mountModelChart(); };
+  document.head.append(script);
+}
+
+function chartSettings() {
+  const mode = S.settings.chartMode || "auto", now = chartMode() === "simple" ? "опростена" : "интерактивна";
+  const option = (value, title, note) => `<label><input type="radio" name="chartMode" value="${value}" ${mode === value ? "checked" : ""}><span>${title}<em>${note}</em></span></label>`;
+  return `<section class="panel chart-settings" id="chart-settings"><p class="kicker">ИЗГЛЕД</p><h3>Графики</h3>
+    <div class="choice choice-stack" role="radiogroup" aria-label="Вид на графиките">
+      ${option("auto", "Автоматично", "на телефон опростена, на компютър интерактивна")}
+      ${option("interactive", "Винаги интерактивна", "TradingView: индикатори, местене, увеличаване")}
+      ${option("simple", "Винаги опростена", "леко изображение с нивата, без индикатори")}
+    </div>
+    <p class="what">Сега на този екран: <strong>${now}</strong>. Промяната се запазва веднага и важи само за този браузър. Нивата и сигналите са едни и същи и в двата вида.</p></section>`;
+}
+
 /* ------------------------------------------------------------ избор */
 
 /** Вариантите (стратегия + графика) за инструмента в избрания стил, подредени по оценката за него. */
@@ -204,6 +241,7 @@ function modelChartPanel(ctx, fixedPair = null, fixedSignal = null) {
 
 function chartPanelHtml(ctx, fixedPair, fixedSignal) {
   const st = chartState(ctx, fixedPair, fixedSignal);
+  st.mode = chartMode();
   MC.state = st;
   const name = FX.PAIRS[st.pair].name;
   const title = st.entry ? `${esc(name)} · ${esc(st.entry.name)} · ${esc(st.entry.tf_label)}` : esc(name);
@@ -231,7 +269,7 @@ function chartControls(st) {
   const live = st.signals.filter(isCurrent), past = st.signals.filter((sig) => !isCurrent(sig));
   const signal = !st.fixedSignal && st.signals.length ? `<label class="mc-field"><span>Сигнал · ${live.length} текущи</span><select data-mc-signal><option value="" ${st.sig ? "" : "selected"}>Само цени и индикатори</option>${live.length ? `<optgroup label="Текущи">${live.map(option).join("")}</optgroup>` : ""}${past.length ? `<optgroup label="Приключили">${past.map(option).join("")}</optgroup>` : ""}</select></label>` : "";
   const loading = MC.loading.has(st.pair), loaded = MC.history.get(st.pair)?.source === S.engine;
-  return `<div class="mc-controls">${pairs}<div class="mc-row mc-view-controls"><span class="muted-small">Преглед</span>${tfs}<button type="button" class="tiny-btn" data-mc-history ${loading || loaded ? "disabled" : ""}>${loading ? "Зареждам историята…" : loaded ? "Историята е заредена" : "По-стара история"}</button></div><div class="mc-row mc-selects">${variant}${signal}</div>${st.entry && st.tf !== st.entry.tf ? `<p class="mc-context">Показана е ${st.tf}. ${st.sig ? "Сигналът" : "Стратегията"} остава на <strong>${esc(st.entry.tf)}</strong>; нивата и правилата са същите.</p>` : ""}</div>`;
+  return `<div class="mc-controls">${pairs}<div class="mc-row mc-view-controls"><span class="muted-small">Преглед</span>${tfs}${st.mode === "simple" ? "" : `<button type="button" class="tiny-btn" data-mc-history ${loading || loaded ? "disabled" : ""}>${loading ? "Зареждам историята…" : loaded ? "Историята е заредена" : "По-стара история"}</button>`}</div><div class="mc-row mc-selects">${variant}${signal}</div>${st.entry && st.tf !== st.entry.tf ? `<p class="mc-context">Показана е ${st.tf}. ${st.sig ? "Сигналът" : "Стратегията"} остава на <strong>${esc(st.entry.tf)}</strong>; нивата и правилата са същите.</p>` : ""}</div>`;
 }
 
 /** Време на отворен пазар от последната свещ. */
@@ -267,6 +305,13 @@ function chartCanvas(st) {
   }).join("")}</div>` : `<p class="what">Стратегията не ползва индикатор, който може да се начертае (входът е по свещи, часове или нива).</p>`;
   const legend = [["entry", "Вход (модел)"], ["stop0", "Стоп"], ["stop", "Стоп сега"], ["target", "Цел (TP)"], ["landmark", "+1R / +2R ориентири"], ["quote", "Котировка"], ["mine", "Твоята реална сделка"]]
     .map(([k, label]) => `<span><i style="background:${MC_COLOR[k]}"></i>${label}</span>`).join("");
+  if (st.mode === "simple") return `<div class="mc-legend" id="mc-legend"></div>
+    <div class="mc-chart mc-simple" id="mc-chart" role="img" aria-label="Свещи ${esc(FX.PAIRS[st.pair].name)} ${esc(FX.TIMEFRAMES[st.tf].label)} с нивата на модела"></div>
+    <p class="mc-model-note">Опростена графика: последните свещи с нивата на модела, без индикатори. <a class="text-link" href="#/settings">Смени вида в Настройки ↗</a></p>
+    <details class="mc-help"><summary>Обозначения и източник</summary>
+    <div class="chart-legend">${legend}<span>┆ сигнал · ▲▼ вход · ■ изход</span></div>
+    <p class="mc-source">Свещи: ${esc(S.data.sources?.prices || "Twelve Data")} · последна завършена свещ до ${esc(when(last))}${q?.time ? ` · котировка ${px(st.pair, q.price)} в ${esc(when(q.time))}${quoteFresh(st.pair) ? "" : " (стара)"}` : " · няма котировка"}. Часовете са по ${esc(TZ)}.</p>
+    <p class="mc-source"><strong>Нивата и маркерите са изчислен модел, не изпълнена сделка при брокер.</strong> Реалният ти вход е в лилаво.</p></details>`;
   return `<div class="mc-legend" id="mc-legend"></div>
     <div class="mc-chart" id="mc-chart" role="img" aria-label="Свещи ${esc(FX.PAIRS[st.pair].name)} ${esc(FX.TIMEFRAMES[st.tf].label)} с индикаторите и нивата на модела"></div>
     ${toggles}
@@ -357,13 +402,13 @@ function viewPair(id) {
     <div class="detail-back"><a class="back-btn" href="#/">← Начало</a><span class="muted-small">${q?.time ? `${quoteFresh(pair) ? "Котировка" : "Стара котировка"}: ${esc(when(q.time))}` : "Няма текуща котировка"}</span></div>
     <div class="page-heading"><div><p class="kicker">ИНСТРУМЕНТ · ${esc(STYLE_NAMES[S.settings.style].toUpperCase())}</p>
       <h1>${esc(name)} <span class="mc-price">${px(pair, info.price)}</span> <span class="chg mc-chg ${info.change_pct > 0 ? "pos" : info.change_pct < 0 ? "neg" : ""}">${info.change_pct == null ? "" : pct(info.change_pct, 2)}</span></h1>
-      <p>Избери стратегия, за да видиш нейните индикатори, правила и нива върху графиката. Свещите и сметките са същите, по които сайтът намира сигналите.</p></div>
+      <p>Текущите сигнали за ${esc(name)}, графика с избрана стратегия и новините за двете валути на едно място.</p></div>
       <span class="page-flag">${current.length} ${current.length === 1 ? "текущ сигнал" : "текущи сигнала"}</span></div>
     ${conflictNotice(pair)}
+    <section class="panel panel-full"><div class="panel-head"><div><p class="kicker">СИГНАЛИ СЕГА</p><h3>Сигнали за ${esc(name)}</h3></div><a class="text-link" href="#/signals">Всички <span>↗</span></a></div>
+      ${current.length ? `<div class="sig-list">${signalGroups(current)}</div>` : `<p class="muted" style="font-size:12px">Стратегиите, които следваш, нямат текущ сигнал за ${esc(name)} в ${esc(STYLE_NAMES[S.settings.style].toLowerCase())} стил. Графиката по-долу показва избрана стратегия без входни нива.</p>`}</section>
     ${modelChartPanel(`pair:${pair}`, pair)}
     <div class="grid-2" style="margin-top:14px">
-      <section class="panel"><div class="panel-head"><div><p class="kicker">СИГНАЛИ СЕГА</p><h3>Сигнали за ${esc(name)}</h3></div><a class="text-link" href="#/signals">Всички <span>↗</span></a></div>
-        ${current.length ? `<div class="sig-list">${signalGroups(current)}</div>` : `<p class="muted" style="font-size:12px">Стратегиите, които следваш, нямат текущ сигнал за ${esc(name)} в ${esc(STYLE_NAMES[S.settings.style].toLowerCase())} стил.</p>`}</section>
       <section class="panel"><div class="panel-head"><div><p class="kicker">НОВИНИ · СЛЕДВАЩИТЕ 48 Ч</p><h3>${esc(currencies.join(" и "))}</h3></div><a class="text-link" href="#/news">Календар <span>↗</span></a></div>
         ${news.length ? news.map((e) => newsCompactWithImpact(e)).join("") : `<p class="muted" style="font-size:12px">Няма важни новини за ${esc(currencies.join(" и "))} в следващите 48 часа.</p>`}
         <p class="what" style="margin-top:10px"><a class="link" href="#/strategies" data-mc-strategies="${pair}">Всички стратегии с оценка за ${esc(name)} →</a></p></section>
@@ -376,7 +421,7 @@ function disposeModelChart() {
   MC.observer?.disconnect();
   MC.observer = null;
   if (MC.chart) { try { MC.chart.remove(); } catch (_e) { /* вече е премахната */ } }
-  MC.chart = null; MC.host = null; MC.key = "";
+  MC.chart = null; MC.host = null; MC.key = ""; MC.simple = false;
 }
 
 const chartHiddenKey = (st) => st.plots.map((p) => (chartShown(st, p) ? "1" : "0")).join("");
@@ -394,12 +439,17 @@ function mountModelChart() {
 function drawModelChart() {
   const host = document.getElementById("mc-chart"), st = MC.state;
   if (!host || !st?.series) { disposeModelChart(); return; }
+  if (st.mode !== chartMode()) { refreshModelChart(); return; }
   const s = st.series;
-  const key = [st.ctx, st.pair, st.tf, st.entry?.id || "", st.sig?.id || "", st.sig?.status || "", st.sig?.stop ?? "", s.n, s.t[0], s.t[s.n - 1], chartHiddenKey(st), S.meta?.quotes?.[st.pair]?.time || 0].join("|");
-  if (MC.chart && MC.host === host && MC.key === key) return;
+  const key = [st.mode, st.ctx, st.pair, st.tf, st.entry?.id || "", st.sig?.id || "", st.sig?.status || "", st.sig?.stop ?? "", s.n, s.t[0], s.t[s.n - 1], chartHiddenKey(st), S.meta?.quotes?.[st.pair]?.time || 0, st.mode === "simple" ? Math.round((host.clientWidth || 0) / 40) : 0].join("|");
+  if ((MC.chart || MC.simple) && MC.host === host && MC.key === key) return;
   disposeModelChart();
+  if (st.mode === "simple") { drawSimpleChart(host, st); MC.simple = true; MC.host = host; MC.key = key; return; }
   const LC = window.LightweightCharts;
-  if (!LC?.createChart) { chartFallback(host, st); return; }
+  if (!LC?.createChart) {
+    if (MC.lib !== "failed") { loadChartLibrary(); if (MC.lib === "loading") { host.innerHTML = '<p class="muted mc-loading">Зареждам графиката…</p>'; return; } }
+    chartFallback(host, st); MC.simple = true; MC.host = host; MC.key = key; return;
+  }
   // Ширината на самата графика (скрит раздел има ширина 0 — тогава приемаме обикновен екран).
   const digits = pairInfo(st.pair).digits, mobile = (host.clientWidth || window.innerWidth || 1000) < 640;
   const plots = st.plots.filter((p) => chartShown(st, p)), osc = plots.filter((p) => p.pane === "osc");
@@ -523,15 +573,77 @@ function chartMarker(m) {
   }
 }
 
-/** Без библиотеката (липсващ файл) остава старата SVG графика с нивата, ако има сигнал. */
+/** Без библиотеката (липсващ файл) се показва опростената графика със същите нива. */
 function chartFallback(host, st) {
-  host.classList.add("mc-fallback");
+  drawSimpleChart(host, st);
+  host.insertAdjacentHTML("beforeend", '<p class="what">Интерактивната графика не се зареди (липсва assets/vendor/lightweight-charts). Показана е опростената.</p>');
+}
+
+/* ------------------------------------------------------------ опростена графика */
+
+/** Кратък надпис за тесния десен край: „Вход ▲/Стоп ▼“, „TP1“, „1R“. */
+const simpleLabel = (label) => label.split(" · ").filter((part) => !/^(Buy|Sell)\b/.test(part))
+  .map((part) => part.replace("Вход (модел)", "Вход").replace("Начален стоп", "Стоп").replace(/^\+(\d)R ориентир/, "$1R").replace(/^Цел (\d) \(TP\)/, "TP$1").replace("Цел (TP)", "TP"))
+  .join("/");
+
+function drawSimpleChart(host, st) {
+  const s = st.series, width = host.clientWidth || Math.min(window.innerWidth || 700, 900), phone = width < 520;
+  const span = phone ? 60 : 90, win = FX.chartWindow(s.n, st.markers, span) || { from: s.n - span, to: s.n };
+  let to = Math.min(s.n - 1, Math.ceil(win.to)), from = Math.max(0, Math.floor(win.from));
+  if (to - from > 220) from = to - 220;
+  host.classList.add("mc-simple");
   host.style.height = "auto";
-  if (st.sig && typeof candleSVG === "function") {
-    const s = st.series, bars = [];
-    for (let k = Math.max(0, s.n - 80); k < s.n; k++) bars.push([s.t[k], s.o[k], s.h[k], s.l[k], s.c[k]]);
-    host.innerHTML = candleSVG(bars, st.sig, host.clientWidth) + `<p class="what">Интерактивната графика не се зареди (липсва assets/vendor/lightweight-charts). Показана е опростена графика.</p>`;
-  } else host.innerHTML = `<p class="muted">Интерактивната графика не се зареди: липсва файлът assets/vendor/lightweight-charts/lightweight-charts.standalone.production.js. Качи всички файлове от пакета.</p>`;
+  host.innerHTML = simpleChartSVG(st, from, to, width);
+  const legend = document.getElementById("mc-legend"), f = (v) => px(st.pair, v);
+  if (legend) legend.innerHTML = `<b>${esc(st.tf === "D1" ? MC_FMT.day.format(new Date(s.t[to] * 1000)) : when(s.t[to]))}</b><span>Отв. ${f(s.o[to])}</span><span>Макс. ${f(s.h[to])}</span><span>Мин. ${f(s.l[to])}</span><span>Затв. ${f(s.c[to])}</span>`;
+}
+
+/** Свещите от from до to с нивата на модела, котировката и реалната сделка. Без индикатори и без библиотека. */
+function simpleChartSVG(st, from, to, width) {
+  const s = st.series, pair = st.pair, W = Math.max(300, Math.round(width)), phone = W < 520;
+  const H = phone ? 250 : 300, L = 6, R = phone ? 106 : 132, T = 12, B = 24, font = phone ? 9 : 10;
+  const lines = st.levels.map((l) => ({ v: l.price, label: simpleLabel(l.label), color: MC_COLOR[l.kind], dash: l.kind === "landmark" ? "2 6" : l.kind === "stop" ? "6 4" : "", width: ["entry", "stop0"].includes(l.kind) ? 1.6 : 1 }));
+  const q = S.meta?.quotes?.[pair];
+  if (Number.isFinite(q?.price)) lines.push({ v: q.price, label: quoteFresh(pair) ? "Цена" : "Стара цена", color: MC_COLOR.quote, dash: "1 4", width: 1 });
+  for (const m of st.mine) lines.push({ v: m.price, label: m.kind === "entry" ? "Твой вход" : "Твой изход", color: MC_COLOR.mine, dash: "5 4", width: 1 });
+  const n = to - from + 1;
+  let min = Infinity, max = -Infinity;
+  for (let i = from; i <= to; i++) { min = Math.min(min, s.l[i]); max = Math.max(max, s.h[i]); }
+  for (const l of lines) { min = Math.min(min, l.v); max = Math.max(max, l.v); }
+  const pad = (max - min) * 0.06 || Math.abs(max) * 0.001 || 0.001;
+  min -= pad; max += pad;
+  const step = (W - L - R) / Math.max(n, 1), x = (i) => L + step * (i - from + 0.5), y = (v) => T + ((max - v) / (max - min)) * (H - T - B);
+  const cw = Math.max(1.5, step * 0.62);
+  const grid = [0, 1, 2, 3].map((k) => { const yy = T + (k * (H - T - B)) / 3; return `<line x1="${L}" x2="${W - R + 4}" y1="${yy}" y2="${yy}" stroke="#22303c" stroke-dasharray="3 5"/>`; }).join("");
+  let candles = "";
+  for (let i = from; i <= to; i++) {
+    const up = s.c[i] >= s.o[i], col = up ? MC_COLOR.up : MC_COLOR.down, top = y(Math.max(s.o[i], s.c[i])), bot = y(Math.min(s.o[i], s.c[i]));
+    candles += `<line x1="${x(i)}" x2="${x(i)}" y1="${y(s.h[i])}" y2="${y(s.l[i])}" stroke="${col}" stroke-width="1"/><rect x="${x(i) - cw / 2}" y="${top}" width="${cw}" height="${Math.max(1, bot - top)}" fill="${col}" opacity="${up ? 0.85 : 0.75}"/>`;
+  }
+  // Маркерите: сигналът е вертикална линия, входът — триъгълник (покупка: нагоре под свещта), Цел 1 — кръгче, изходът — квадратче.
+  const marks = st.markers.filter((m) => m.index >= from && m.index <= to).map((m) => {
+    const cx = x(m.index), sell = m.dir === -1;
+    if (m.kind === "signal") return `<line x1="${cx}" x2="${cx}" y1="${T}" y2="${H - B}" stroke="${MC_COLOR.signal}" stroke-dasharray="2 4"/><text x="${cx + 4}" y="${T + 10}" font-size="${font}" fill="${MC_COLOR.signal}">сигнал</text>`;
+    if (m.kind === "fill") { const yy = sell ? y(s.h[m.index]) - 9 : y(s.l[m.index]) + 9, d = sell ? -5 : 5; return `<path d="M${cx - 5},${yy + d} L${cx + 5},${yy + d} L${cx},${yy - d} Z" fill="${MC_COLOR.entry}"/>`; }
+    if (m.kind === "tp1") return `<circle cx="${cx}" cy="${sell ? y(s.l[m.index]) + 8 : y(s.h[m.index]) - 8}" r="3.5" fill="${MC_COLOR.target}"/>`;
+    const col = m.kind === "exit" ? (m.r > 0.02 ? MC_COLOR.up : m.r < -0.02 ? MC_COLOR.down : "#9aa8b4") : "#9aa8b4";
+    return `<rect x="${cx - 4}" y="${(sell ? y(s.l[m.index]) + 6 : y(s.h[m.index]) - 14)}" width="8" height="8" fill="${col}"/>`;
+  }).join("");
+  // Надписите вдясно не се застъпват: подреждат се отгоре надолу на поне 17–19 px.
+  const gap = phone ? 17 : 19, lo = T + 9, hi = H - B - 9;
+  const order = lines.map((l, k) => ({ k, y: y(l.v) })).sort((a, b) => a.y - b.y);
+  order.forEach((p, i) => { p.y = Math.max(p.y, lo, i ? order[i - 1].y + gap : lo); });
+  for (let i = order.length - 1; i >= 0; i--) order[i].y = Math.min(order[i].y, i === order.length - 1 ? hi : order[i + 1].y - gap);
+  const labelY = Object.fromEntries(order.map((p) => [p.k, p.y]));
+  const levels = lines.map((l, k) => `<line x1="${L}" x2="${W - R + 4}" y1="${y(l.v)}" y2="${y(l.v)}" stroke="${l.color}" stroke-width="${l.width}" ${l.dash ? `stroke-dasharray="${l.dash}"` : ""} opacity=".9"/>`
+    + `<rect x="${W - R + 6}" y="${labelY[k] - 8.5}" width="${R - 8}" height="17" rx="4" fill="#111a22" stroke="${l.color}" stroke-opacity=".6"/>`
+    + `<text x="${W - R + 10}" y="${labelY[k] + 3.5}" font-size="${font}" fill="${l.color}">${esc(l.label)} ${px(pair, l.v)}</text>`).join("");
+  const ticks = [from, from + Math.floor(n / 3), from + Math.floor((2 * n) / 3), to].filter((v, i, a) => a.indexOf(v) === i).map((i) => {
+    const d = new Date(s.t[i] * 1000), label = st.tf === "D1" ? F.dayMonth.format(d) : `${F.dayMonth.format(d)} ${F.time.format(d)}`;
+    // Крайните дати се подравняват навътре, за да не се режат.
+    return `<text x="${x(i)}" y="${H - 6}" font-size="${font}" fill="#677c8a" text-anchor="${i === from ? "start" : i === to ? "end" : "middle"}">${label}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Опростена графика на ${esc(FX.PAIRS[pair].name)} с нивата на модела">${grid}${candles}${levels}${marks}${ticks}</svg>`;
 }
 
 /* ------------------------------------------------------------ действия */
@@ -585,7 +697,13 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  const t = event.target, sel = currentChartSel();
+  const t = event.target;
+  if (t.matches?.('input[name="chartMode"]')) {
+    S.settings.chartMode = t.value; saveSettings(); render();
+    toast(t.value === "auto" ? "Графики: автоматично според екрана." : t.value === "simple" ? "Графики: винаги опростени." : "Графики: винаги интерактивни.");
+    return;
+  }
+  const sel = currentChartSel();
   if (!sel) return;
   if (t.matches?.("[data-mc-variant]")) { Object.assign(sel, { id: t.value, tf: stratById(t.value)?.tf || null, signal: null, picked: true }); refreshModelChart("[data-mc-variant]"); }
   else if (t.matches?.("[data-mc-signal]")) { sel.signal = t.value; refreshModelChart("[data-mc-signal]"); }

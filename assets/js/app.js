@@ -3,7 +3,7 @@
 // Каталог, сигнали и лични настройки. Цените и новините идват от JSON файловете.
 
 const STORE_KEY = "logo-signals-settings-v1";
-const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null, smartPairs: true, notifications: false };
+const DEFAULTS = { balance: null, currency: "USD", risk: 0.5, style: "day", followed: null, smartPairs: true, notifications: false, chartMode: "auto" };
 const MY_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CHF", "CAD", "NZD"];
 const CURRENCY_NAMES = { USD: "САЩ", EUR: "Еврозона", GBP: "Великобритания", JPY: "Япония", AUD: "Австралия", CHF: "Швейцария", CAD: "Канада", NZD: "Нова Зеландия", CNY: "Китай", ALL: "Всички" };
 const STYLE_NAMES = { day: "Дневна", swing: "Суинг" };
@@ -60,6 +60,8 @@ function clean(s) {
   s.followed = Array.isArray(s.followed) ? s.followed.filter((x) => typeof x === "string") : null;
   s.smartPairs = s.smartPairs !== false;
   s.notifications = s.notifications === true;
+  // Графики: auto — опростена на телефон, интерактивна на компютър; interactive и simple — винаги едната.
+  s.chartMode = ["auto", "interactive", "simple"].includes(s.chartMode) ? s.chartMode : "auto";
   return s;
 }
 
@@ -91,7 +93,8 @@ function rel(ts) {
   let t;
   if (a < 60) t = "по-малко от минута";
   else if (a < 3600) t = `${Math.round(a / 60)} мин`;
-  else if (a < 86400) { const h = Math.floor(a / 3600), m = Math.round((a % 3600) / 60); t = m ? `${h} ч ${m} мин` : `${h} ч`; }
+  // Закръгляме общите минути, за да няма „2 ч 60 мин“.
+  else if (a < 86400) { const total = Math.round(a / 60), h = Math.floor(total / 60), m = total % 60; t = m ? `${h} ч ${m} мин` : `${h} ч`; }
   else { const d = Math.round(a / 86400); t = d === 1 ? "1 ден" : `${d} дни`; }
   return diff >= 0 ? `след ${t}` : `преди ${t}`;
 }
@@ -452,8 +455,19 @@ function signalCard(sig) {
     ${freshnessNotice(sig)}
     ${costNotice(sig)}
     <div class="sig-foot">${sizeText}<span>${foot} →</span></div></a>
-    <div class="sig-watch-actions">${watchButton(sig)}<a href="#/signal/${encodeURIComponent(sig.id)}" class="btn btn-quiet btn-sm">Подробности</a></div>
+    <div class="sig-watch-actions">${watchButton(sig)}<div class="chips-row">${isCurrent(sig) ? `<button type="button" class="btn btn-quiet btn-sm" data-model-focus="${esc(sig.id)}" title="Графика с нивата на този сигнал">▦ Графика</button>` : ""}<a href="#/signal/${encodeURIComponent(sig.id)}" class="btn btn-quiet btn-sm">Подробности</a></div></div>
+    ${isCurrent(sig) ? cardNews(sig) : ""}
   </article>`;
+}
+
+/** Новините за двете валути на сигнала в следващите 24 часа, сгънати в картата. */
+function cardNews(sig) {
+  const currencies = pairCurrencies(sig.pair).filter((c) => MY_CURRENCIES.includes(c)), names = currencies.join(" и ");
+  const list = newsFor(currencies, now() - 3600, now() + 24 * 3600, ["high", "medium"]);
+  if (!list.length) return `<p class="card-news-none">Няма важни новини за ${esc(names)} в следващите 24 ч.</p>`;
+  const high = list.filter((e) => e.impact === "high").length;
+  return `<details class="card-news"><summary>◷ Новини за ${esc(names)}: ${list.length}${high ? ` · ${high} ${high === 1 ? "силна" : "силни"}` : ""} в следващите 24 ч</summary>
+    ${list.slice(0, 6).map((e) => newsCompactWithImpact(e, sig)).join("")}<a class="text-link" href="#/news">Целият календар <span>↗</span></a></details>`;
 }
 
 function sparkline(curve, h = 54) {
@@ -572,73 +586,6 @@ function viewWatch() {
 
 /* ------------------------------------------------------------ графики */
 
-function candleSVG(bars, sig, width) {
-  const W = Math.max(300, Math.round(width || 760)), H = 290, L = 6, R = 104, T = 12, B = 24;
-  const pair = sig.pair;
-  const orders = ordersOf(sig);
-  const lines = [];
-  orders.forEach((o, k) => {
-    const tag = orders.length > 1 ? (o.dir === 1 ? " ▲" : " ▼") : "";
-    lines.push({ v: o.entry, label: `Вход${tag}`, color: "#e8eef0" });
-    if (!(orders.length > 1 && k === 1 && o.stop === orders[0].stop)) lines.push({ v: o.stop, label: `Стоп${tag}`, color: "#fc928e" });
-    if (orders.length === 1) {
-      const fixed = targetCells(o, sig);
-      fixed.forEach(([name, v], j) => {
-        if (v != null) lines.push({ v, label: name, color: j ? "#c5f58c" : "#9fe4ac" });
-      });
-      const r = riskLandmarks(pair, o, sig);
-      if (r) [r.one, r.two].forEach((v, j) => {
-        if (!fixed.some(([, target]) => target != null && Math.abs(target - v) < Math.pow(10, -pairInfo(pair).digits) / 2))
-          lines.push({ v, label: `${j + 1}R ор.`, color: "#7590a2", dash: true });
-      });
-    }
-  });
-  if (sig.status === "open" && sig.stop != null && sig.stop !== (sig.stop0 ?? sig.stop)) {
-    lines.push({ v: sig.stop, label: "Стоп сега", color: "#f6cd8e" });
-  }
-  const vals = bars.flatMap((b) => [b[2], b[3]]).concat(lines.map((l) => l.v));
-  let min = Math.min(...vals), max = Math.max(...vals);
-  const pad = (max - min) * 0.06 || 0.001;
-  min -= pad; max += pad;
-  const n = bars.length;
-  const step = (W - L - R) / Math.max(n, 1);
-  const x = (i) => L + step * (i + 0.5);
-  const y = (v) => T + ((max - v) / (max - min)) * (H - T - B);
-  const cw = Math.max(1.5, step * 0.62);
-  const grid = [0, 1, 2, 3].map((k) => { const yy = T + (k * (H - T - B)) / 3; return `<line x1="${L}" x2="${W - R + 4}" y1="${yy}" y2="${yy}" stroke="#22303c" stroke-dasharray="3 5"/>`; }).join("");
-  const candles = bars.map((b, i) => {
-    const up = b[4] >= b[1];
-    const col = up ? "#9fe4ac" : "#fc928e";
-    const top = y(Math.max(b[1], b[4])), bot = y(Math.min(b[1], b[4]));
-    return `<line x1="${x(i)}" x2="${x(i)}" y1="${y(b[2])}" y2="${y(b[3])}" stroke="${col}" stroke-width="1"/>` +
-      `<rect x="${x(i) - cw / 2}" y="${top}" width="${cw}" height="${Math.max(1, bot - top)}" fill="${col}" opacity="${up ? 0.85 : 0.75}"/>`;
-  }).join("");
-  const tfSec = TF_SEC[sig.tf] || 3600;
-  const sigIdx = bars.findIndex((b) => b[0] === sig.signal_time - tfSec);
-  const marker = sigIdx >= 0 ? `<line x1="${x(sigIdx)}" x2="${x(sigIdx)}" y1="${T}" y2="${H - B}" stroke="#f6cd8e" stroke-dasharray="2 4"/><text x="${x(sigIdx) + 4}" y="${T + 10}" font-size="10" fill="#f6cd8e">сигнал</text>` : "";
-  // Надписите вдясно не трябва да се застъпват: подреждаме ги отгоре надолу с разстояние поне 19px.
-  const gap = 19, top = T + 9, bottom = H - B - 9;
-  const order = lines.map((l, k) => ({ k, y: y(l.v) })).sort((a, b) => a.y - b.y);
-  order.forEach((p, i) => { p.y = Math.max(p.y, top, i ? order[i - 1].y + gap : top); });
-  for (let i = order.length - 1; i >= 0; i--) {
-    order[i].y = Math.min(order[i].y, i === order.length - 1 ? bottom : order[i + 1].y - gap);
-  }
-  const labelY = {};
-  order.forEach((p) => { labelY[p.k] = p.y; });
-  const lvl = lines.map((l, k) => {
-    const ly = labelY[k];
-    return `<line x1="${L}" x2="${W - R + 4}" y1="${y(l.v)}" y2="${y(l.v)}" stroke="${l.color}" stroke-dasharray="${l.dash ? "2 6" : "5 4"}" opacity="${l.dash ? ".75" : ".9"}"/>` +
-      `<rect x="${W - R + 6}" y="${ly - 9}" width="${R - 8}" height="18" rx="4" fill="#111a22" stroke="${l.color}" stroke-opacity=".6"/>` +
-      `<text x="${W - R + 11}" y="${ly + 4}" font-size="10" fill="${l.color}">${esc(l.label)} ${px(pair, l.v)}</text>`;
-  }).join("");
-  const labels = [0, Math.floor(n / 3), Math.floor((2 * n) / 3), n - 1].filter((v, i, a) => v >= 0 && a.indexOf(v) === i).map((i) => {
-    const d = new Date(bars[i][0] * 1000);
-    const t = sig.tf === "D1" ? F.dayMonth.format(d) : `${F.dayMonth.format(d)} ${F.time.format(d)}`;
-    return `<text x="${x(i)}" y="${H - 6}" font-size="10" fill="#677c8a" text-anchor="middle">${t}</text>`;
-  }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Графика на ${esc(sig.pair_name)} с нивата на сигнала">${grid}${candles}${marker}${lvl}${labels}</svg>`;
-}
-
 function equitySVG(curve, width) {
   if (!curve || curve.length < 2) return emptyBox("◇", "Няма достатъчно сделки", "Графиката ще се появи, когато стратегията има сделки в теста.");
   const W = Math.max(300, Math.round(width || 760)), H = 220, L = 8, R = 60, T = 12, B = 22;
@@ -659,20 +606,6 @@ function equitySVG(curve, width) {
     <line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="#3a4855" stroke-dasharray="3 4"/>
     <path d="${area}" fill="url(#eq)"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
     ${ticks}${labels}</svg>`;
-}
-
-function loadChart(sig) {
-  const host = document.getElementById("sig-chart");
-  if (!host) return;
-  const s = S.engine && S.engine.get(sig.pair, sig.tf);
-  const bars = [];
-  if (s) {
-    const end = isCurrent(sig) ? Infinity : (sig.exit_time || sig.valid_until) + TF_SEC[sig.tf] * 8;
-    let idx = s.n;
-    while (idx > 0 && s.t[idx - 1] > end) idx--;
-    for (let k = Math.max(0, idx - 80); k < idx; k++) bars.push([s.t[k], s.o[k], s.h[k], s.l[k], s.c[k]]);
-  }
-  host.innerHTML = bars.length ? candleSVG(bars, sig, host.clientWidth) : `<p class="muted">Няма данни за графиката.</p>`;
 }
 
 function drawEquity(e) {
@@ -726,22 +659,31 @@ function profileStrip() {
     <a class="btn btn-outline btn-sm" href="#/settings">Промени</a></section>`;
 }
 
+/** Началната страница е за сигналите. Новините, цените и графиката са до тях като помощ за решението. */
 function viewDashboard() {
   const d = S.data, current = mySignals().filter(isCurrent), groups = FX.signalTools.group(current);
   const pending = current.filter((sig) => sig.status === "pending").length;
-  const upcoming = newsFor(MY_CURRENCIES, now(), now() + 48 * 3600, ["high"]).slice(0, 5);
+  const upcoming = newsFor(MY_CURRENCIES, now(), now() + 48 * 3600, ["high"]).slice(0, 6);
   const best = sortedStrategies().filter((entry) => styleOk(entry.style) && !entry.retired && ["good", "tested", "weak"].includes(bestVerdict(entry))).slice(0, 3);
   const stats = RiskJournal.stats(journalTrades()), plan = JOURNAL.plan;
-  const status = `<div class="dashboard-status"><span><i class="status-dot ${d.market?.open ? "" : "off"}"></i>${d.market?.open ? "Пазарът е отворен" : "Пазарът е затворен"}</span><span>Цени: <strong>${d.prices_updated ? esc(rel(d.prices_updated)) : "няма текущи"}</strong></span><span><strong>${current.length}</strong> сигнала за ${groups.length} инструмента · ${pending} чакат вход</span>${upcoming[0] ? `<a href="#/news">Следваща важна новина: ${esc(upcoming[0].currency)} · ${esc(when(upcoming[0].time))}</a>` : ""}</div>`;
-  const signalBody = current.length ? `<div class="sig-list">${signalGroups(current)}</div>` : emptyBox("⌁", "Няма текущи сигнали", noSignalsReason(), `<a class="btn btn-outline" href="#/strategies">Избери стратегии</a>`);
-  const risk = `<section class="panel"><div class="panel-head"><div><p class="kicker">ОТ ЛИЧНИЯ ДНЕВНИК</p><h3>Отчетен риск</h3></div><a class="text-link" href="#/risk">Дневник ↗</a></div><div class="dashboard-risk"><div><span>Отворен</span><strong class="${stats.openRisk >= plan.open ? "neg" : ""}">${F.num(2).format(stats.openRisk)}%</strong><small>лимит ${plan.open}% · ${stats.open.length} позиции</small></div><div><span>Дневен бюджет за загуби</span><strong>${F.num(2).format(Math.max(0, plan.daily - stats.daily))}%</strong><small>остава от ${plan.daily}%</small></div></div>${portfolioRiskNotice()}<p class="what">Сметката включва само въведените сделки. Баланс ${S.settings.balance ? money(S.settings.balance, 0) : "не е въведен"} · риск на сделка ${S.settings.risk}%.</p><a class="text-link" href="#/settings">Баланс и настройки ↗</a></section>`;
-  const news = `<section class="panel"><div class="panel-head"><div><p class="kicker">СЛЕДВАЩИТЕ 48 ЧАСА</p><h3>Важни новини</h3></div><a class="text-link" href="#/news">Календар ↗</a></div>${upcoming.length ? upcoming.map(newsCompact).join("") : '<p class="what">Няма предстоящи новини с висока важност в наличния календар.</p>'}</section>`;
+  const status = `<div class="dashboard-status"><span><i class="status-dot ${d.market?.open ? "" : "off"}"></i>${d.market?.open ? "Пазарът е отворен" : "Пазарът е затворен"}</span><span>Цени: <strong>${d.prices_updated ? esc(rel(d.prices_updated)) : "няма текущи"}</strong></span><span><strong>${current.length}</strong> ${current.length === 1 ? "сигнал" : "сигнала"} за ${groups.length} ${groups.length === 1 ? "инструмент" : "инструмента"} · ${pending} чакат вход</span><a href="#/risk" class="${stats.open.length >= tradeCapacity().total ? "status-full" : ""}">Твои отворени сделки: ${stats.open.length} от най-много ${Math.max(tradeCapacity().total, 0)}</a>${upcoming[0] ? `<a href="#/news">Следваща важна новина: ${esc(upcoming[0].currency)} · ${esc(when(upcoming[0].time))}</a>` : ""}</div>`;
+  let signalBody;
+  if (current.length) signalBody = `<div class="sig-list">${signalGroups(current)}</div>`;
+  else if (!followedInStyle().length) signalBody = emptyBox("◈", "Не следваш нито една стратегия", "Избери поне една стратегия и тук ще виждаш нейните сигнали.", `<a class="btn btn-primary" href="#/strategies">Към стратегиите ↗</a>`);
+  else signalBody = emptyBox("⌁", "В момента няма сигнали", esc(noSignalsReason()), `<a class="btn btn-outline" href="#/signals" data-sigfilter="done">Виж последните приключили ↗</a>`);
+  const signals = `<section class="panel dashboard-signals"><div class="panel-head"><div><p class="kicker">${esc(STYLE_NAMES[S.settings.style].toUpperCase())} · ${current.length} ${current.length === 1 ? "СИГНАЛ" : "СИГНАЛА"}</p><h3>Текущи сигнали</h3></div><a class="text-link" href="#/signals">Всички ↗</a></div>
+    ${current.length ? '<p class="what">Всяка карта казва дали може да се влезе сега. „Графика“ показва нивата на сигнала, а „Новини“ — събитията за двете валути.</p>' : ""}${signalBody}</section>`;
+  // Новините за валутите на текущите сигнали са отбелязани, за да се види кой сигнал засягат.
+  const affects = (e) => groups.filter((g) => pairCurrencies(g.pair).includes(e.currency)).map((g) => FX.PAIRS[g.pair].name);
+  const news = `<section class="panel"><div class="panel-head"><div><p class="kicker">СЛЕДВАЩИТЕ 48 ЧАСА</p><h3>Важни новини</h3></div><a class="text-link" href="#/news">Календар ↗</a></div>${upcoming.length ? upcoming.map((e) => { const pairs = affects(e); return newsCompact(e) + (pairs.length ? `<p class="news-affects">Засяга сигналите за ${esc(pairs.join(", "))}</p>` : ""); }).join("") : '<p class="what">Няма предстоящи новини с висока важност в наличния календар.</p>'}</section>`;
+  const prices = `<section class="panel"><div class="panel-head"><div><p class="kicker">ЦЕНИ</p><h3>Валутни двойки</h3></div><span class="muted-small">промяна за деня</span></div>${pricesList()}<p class="what">Натисни двойка за нейната страница: графика, сигнали и новини.</p></section>`;
+  const risk = `<section class="panel"><div class="panel-head"><div><p class="kicker">ОТ ЛИЧНИЯ ДНЕВНИК</p><h3>Отчетен риск</h3></div><a class="text-link" href="#/risk">Дневник ↗</a></div><div class="dashboard-risk"><div><span>Отворен</span><strong class="${stats.openRisk >= plan.open ? "neg" : ""}">${F.num(2).format(stats.openRisk)}%</strong><small>лимит ${plan.open}% · ${stats.open.length} позиции</small></div><div><span>Дневен бюджет за загуби</span><strong>${F.num(2).format(Math.max(0, plan.daily - stats.daily))}%</strong><small>остава от ${plan.daily}%</small></div></div>${capacityAdvice(stats)}${portfolioRiskNotice()}<p class="what">Сметката включва само въведените сделки. Баланс ${S.settings.balance ? money(S.settings.balance, 0) : "не е въведен"} · риск на сделка ${S.settings.risk}%.</p><a class="text-link" href="#/settings">Баланс и настройки ↗</a></section>`;
   const tests = `<section class="panel"><div class="panel-head"><div><p class="kicker">ИСТОРИЧЕСКИ РЕЗУЛТАТИ</p><h3>От избрания режим</h3></div><a class="text-link" href="#/strategies">Стратегии ↗</a></div><div class="dashboard-strategies">${best.map((entry) => {
     const pair = bestPairRow(entry), row = pair || entry.stats;
     return `<a href="#/strategy/${esc(entry.id)}"><strong>${esc(entry.name)} · ${entry.tf}</strong>${headlineBadge(entry)}<small>${pair ? esc(pair.name) + " · " : ""}${row.trades} сделки · средно ${fmtR(row.avg_r || 0)}</small></a>`;
   }).join("") || '<p class="what">Няма оценени варианти за този режим.</p>'}</div></section>`;
-  const onboarding = S.settings.balance ? "" : movablePanel("account", "Баланс и риск", `<section class="panel"><details class="account-setup"><summary>Въведи баланс, за да смятаме обема</summary>${onboardingCard()}</details></section>`);
-  return `<div class="page-heading dashboard-heading"><div><p class="kicker">ПАЗАРЕН ПРЕГЛЕД</p><h1>Графика и сигнали</h1></div><a class="btn btn-outline btn-sm" href="#/risk">Риск и дневник</a></div>${status}<div class="workspace-grid" data-panel-board="home">${movablePanel("chart", "Графика", modelChartPanel("home"))}${movablePanel("signals", "Сигнали по инструменти", `<section class="panel"><div class="panel-head"><div><p class="kicker">${esc(STYLE_NAMES[S.settings.style].toUpperCase())}</p><h3>Сигнали по инструменти</h3></div><a class="text-link" href="#/signals">Всички ↗</a></div>${signalBody}</section>`, "wide")}${movablePanel("risk", "Отчетен риск", risk, "narrow")}${movablePanel("news", "Важни новини", news, "half")}${movablePanel("strategies", "Стратегии от теста", tests, "half")}${onboarding}</div>`;
+  const onboarding = S.settings.balance ? "" : movablePanel("account", "Баланс и риск", `<section class="panel"><details class="account-setup"><summary>Въведи баланс, за да смятаме обема за всеки сигнал</summary>${onboardingCard()}</details></section>`);
+  return `<div class="page-heading dashboard-heading"><div><p class="kicker">${esc(STYLE_NAMES[S.settings.style].toUpperCase())} ТЪРГОВИЯ</p><h1>Сигнали сега</h1></div><div class="chips-row"><a class="btn btn-outline btn-sm" href="#/signals">Всички сигнали</a><a class="btn btn-outline btn-sm" href="#/risk">Риск и дневник</a></div></div>${status}<div class="workspace-grid" data-panel-board="home">${onboarding}${movablePanel("signals", "Текущи сигнали", signals, "wide")}${movablePanel("side", "Новини и цени", `<div class="stack">${news}${prices}</div>`, "narrow")}${movablePanel("chart", "Графика", modelChartPanel("home"))}${movablePanel("risk", "Отчетен риск", risk, "half")}${movablePanel("strategies", "Стратегии от теста", tests, "half")}</div>`;
 }
 
 function pricesList() {
@@ -885,6 +827,8 @@ function stepsFor(sig) {
 
 function tipsFor(sig, strat) {
   const tips = [];
+  const cap = tradeCapacity(), open = RiskJournal.stats(journalTrades()).open.length;
+  if (isCurrent(sig) && cap.total >= 1 && open >= cap.total) tips.push(["warn", `Вече имаш ${open} отворени сделки при максимум ${cap.total} за риск ${F.num(2).format(cap.risk)}% на сделка. По-добре наблюдавай този сигнал, докато не затвориш позиция.`]);
   const pair = signalPairChoice(sig);
   tips.push([pair.allowed ? "info" : "warn", `${pair.label} за ${sig.pair_name}. ${pair.reason}`]);
   const hi = newsFor(pairCurrencies(sig.pair), now() - 15 * 60, now() + 3 * 3600, ["high"]);
@@ -917,10 +861,8 @@ function viewSignal(id) {
     ${freshnessNotice(sig)}
     ${costNotice(sig)}
     ${watchDetail(sig)}
-    <div class="panel signal-personal"><h3>Твоята сделка</h3><p class="what">Ако си влязъл при брокера, добави реалния вход и обем в личния дневник.</p><div class="chips-row">${ordersOf(sig).map((order) => `<button type="button" class="btn btn-outline" data-journal-signal="${esc(sig.id)}" data-journal-dir="${order.dir}">Запиши ${order.dir === 1 ? "покупка" : "продажба"}</button>`).join("")}</div></div>
     ${signalAvailability(sig)}${conflictNotice(sig.pair)}
     <div class="status-box ${boxCls}"><strong>${esc(st.label)}.</strong> ${esc(st.text)}</div>
-    ${modelChartPanel("signal:" + sig.id, sig.pair, sig)}
     ${entryNowPanel(sig)}
     <div class="detail-grid"><div class="detail-column">
       <section class="panel trade-plan-panel"><div class="panel-head"><div><p class="kicker">НИВА</p><h3>${orders.length > 1 ? "Две възможни посоки" : "Вход, стоп и цели"}</h3></div><span class="pill pill-neutral">${esc(sig.tf_label)}</span></div>
@@ -933,6 +875,7 @@ function viewSignal(id) {
         ${landmarkNote(sig.pair, o, sig)}` ).join("")}
         <p class="what"><strong>Истински изход:</strong> ${ownExit(strat) ? esc((strat?.exit_rules || []).join(" ") || "По правило на стратегията. Проверявай условията за изход.") : "При 1R се затваря половината, стопът на остатъка отива на входа; при 2R се затваря останалото."}</p>
       </section>
+      ${modelChartPanel("signal:" + sig.id, sig.pair, sig)}
       <section class="panel"><div class="panel-head"><div><p class="kicker">ЗАЩО</p><h3>Защо има сигнал</h3></div></div>
         <p class="why-text">${esc(sig.why)}</p>
         ${strat ? `<p class="what">Правилата на стратегията и как се е представила в теста: <a class="link" href="#/strategy/${esc(strat.id)}">${esc(strat.name)} →</a></p>` : ""}</section>
@@ -942,6 +885,7 @@ function viewSignal(id) {
           <div class="field"><label for="size-risk">Риск на сделка (%)</label><input type="number" id="size-risk" min="0.1" max="1" step="0.05" value="${S.settings.risk}"></div></div>
         <p class="risk-inline-hint">Препоръчително 0.5%, максимум 1%. Промените се запазват.</p>
         <div id="size-host">${orders.map((o, k) => sizeBlock(sig, o, k, orders.length)).join("")}</div></section>
+      <div class="panel signal-personal"><h3>Твоята сделка</h3><p class="what">Ако си влязъл при брокера, добави реалния вход и обем в личния дневник.</p><div class="chips-row">${ordersOf(sig).map((order) => `<button type="button" class="btn btn-outline" data-journal-signal="${esc(sig.id)}" data-journal-dir="${order.dir}">Запиши ${order.dir === 1 ? "покупка" : "продажба"}</button>`).join("")}</div></div>
       ${steps.length ? `<section class="panel"><div class="panel-head"><div><p class="kicker">СТЪПКА ПО СТЪПКА</p><h3>Какво да направиш</h3></div></div>
         <div class="steps-list" id="steps-host">${steps.map(([t, p], i) => `<div class="step"><span class="step-index">${String(i + 1).padStart(2, "0")}</span><div><strong>${esc(t)}</strong><p>${esc(p)}</p></div></div>`).join("")}</div></section>` : ""}
       <section class="panel"><div class="panel-head"><div><p class="kicker">СЪВЕТИ</p><h3>Преди да влезеш</h3></div></div>
@@ -1090,6 +1034,13 @@ function viewNews() {
     </section>`;
 }
 
+/** Едно изречение за настройките: колко сделки едновременно при този риск и текущите лични лимити. */
+function capacityText(risk) {
+  const cap = tradeCapacity(JOURNAL.plan, risk);
+  return cap.total < 1 ? `Този риск е над лимита за отворен риск (${JOURNAL.plan.open}%).`
+    : `При ${F.num(2).format(risk)}% на сделка: най-много ${cap.total} ${cap.total === 1 ? "сделка" : "сделки"} едновременно (лимит ${JOURNAL.plan.open}% отворен риск), до ${cap.currency} с една валута. Лимитите се сменят в „Риск и дневник“.`;
+}
+
 function viewSettings() {
   const st = S.settings;
   const rm = riskMoney();
@@ -1105,6 +1056,7 @@ function viewSettings() {
           <div class="form-field"><label for="set-risk">Риск на една сделка</label>
             <div class="risk-line"><input id="set-risk" name="risk" type="range" min="0.1" max="1" step="0.05" value="${st.risk}"><output id="risk-out">${st.risk}%</output></div>
             <div class="risk-money" id="risk-money">${rm ? `= ${money(rm)} на сделка` : ""}</div>
+            <div class="what" id="risk-capacity">${capacityText(st.risk)}</div>
             <span class="what">Планираната загуба при достигане на стопа. Препоръчително 0.5%, максимум 1%. При 10 загуби подред и 0.5% губиш около 5% от сметката.</span></div>
           <div class="form-field"><span class="label">Стил на търговия</span>
             <div class="choice">
@@ -1122,7 +1074,7 @@ function viewSettings() {
         <div class="settings-fact"><span>Риск</span><strong>$10</strong></div>
         <div class="settings-fact"><span>Обем за EUR/USD</span><strong>10 ÷ (20 × $10) = 0.05 лота</strong></div>
         <div class="settings-fact"><span>Данни</span><strong>Само в този браузър</strong></div></section>
-    </div>${noticesPanel()}`;
+    </div>${chartSettings()}${noticesPanel()}`;
 }
 
 function viewHelp() {
@@ -1170,7 +1122,7 @@ function viewHelp() {
         <section class="panel" id="chart-help"><p class="kicker">ГРАФИКАТА С МОДЕЛА</p><h3 style="margin-bottom:8px">Как да я четеш</h3>
           <ul class="rules">
             <li>На началната страница избираш инструмент и стратегия. Дневните модели работят на M15/H1, а суинг моделите — на H4/D1. „Преглед“ сменя графиката между четирите периода, без да променя сигнала и нивата му.</li>
-            <li>Графиката е една и съща в началото, в инструмента и в сигнала. Панелите се местят от „Мести“ с мишката или със стрелките на телефон; редът се пази в този браузър.</li>
+            <li>Графиката е една и съща в началото, в инструмента и в сигнала. На началната страница графиката е под сигналите; бутонът „Графика“ на всяка карта показва нивата на този сигнал. За да преместиш панел, натисни „Подреди панелите“, после „Мести“ или стрелките; редът се пази в този браузър.</li>
             <li>Свещите и индикаторите са същите, по които сайтът смята сигналите. Показват се само индикаторите, които стратегията ползва.</li>
             <li>● е свещта на сигнала, ▲▼ е достигнатият вход по модела, ■ е изходът. Линиите са вход, начален и текущ стоп и действителните цели (TP). +1R и +2R са само ориентири.</li>
             <li>Без текущ сигнал на графиката няма входни нива. При две противоположни чакащи поръчки се виждат и двете.</li>
@@ -1562,6 +1514,8 @@ document.addEventListener("input", (ev) => {
     document.getElementById("risk-out").textContent = `${Number(t.value)}%`;
     const bal = Number(document.getElementById("set-balance").value);
     document.getElementById("risk-money").textContent = bal >= 50 ? `= ${money((bal * Number(t.value)) / 100)} на сделка` : "";
+    const capacity = document.getElementById("risk-capacity");
+    if (capacity) capacity.textContent = capacityText(Number(t.value));
     return;
   }
   if (t.id === "size-balance" || t.id === "size-risk") {

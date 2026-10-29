@@ -64,6 +64,35 @@
 .panel .chips-row { flex-wrap:wrap; }
 .mc-side .panel-tools button { min-width:26px; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+/* 5.0: сигналите първи. Групата е заглавие и видими карти; другите варианти са под „Още“. */
+.signal-group { grid-column:1/-1; display:flex; flex-direction:column; gap:10px; }
+.signal-group.single { grid-column:auto; border:0; padding:0; background:transparent; }
+.signal-group-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 14px; }
+.signal-group-head strong { font-size:16px; }
+.signal-group-head span { color:#a9b8c3; font-size:12px; }
+.signal-group-head small { flex-basis:100%; color:var(--muted); font-size:11px; line-height:1.55; }
+.signal-group .warn-line { margin:0; }
+.signal-group .sig-grid { margin-top:0; }
+.group-more { border:1px dashed #33414d; border-radius:10px; padding:10px 12px; }
+.group-more>summary { cursor:pointer; color:var(--accent); font-size:12px; font-weight:700; }
+.group-more[open]>summary { margin-bottom:10px; }
+.sig-list .signal-group:not(.single) { border:1px solid var(--line); border-radius:12px; padding:14px; background:#0f1720; }
+.sig-grid>.signal-group:not(.single) { border:1px solid var(--line); border-radius:12px; padding:14px; background:#0f1720; }
+.card-news { margin-top:10px; border-top:1px solid #2d3945; padding-top:9px; }
+.card-news>summary { cursor:pointer; font-size:11.5px; font-weight:700; color:#c5d2db; }
+.card-news[open]>summary { margin-bottom:6px; }
+.card-news .news-compact { padding:8px 0; }
+.card-news-none { margin-top:9px; font-size:11px; color:var(--muted); }
+.news-affects { margin:-4px 0 8px; font-size:11px; color:var(--amber); }
+.dashboard-signals .sig-list { gap:14px; }
+/* Местенето е скрито, докато не се натисне „Подреди панелите“. */
+.layout-toolbar { justify-content:flex-end; margin:8px 0 2px; }
+body:not(.panels-editing) .panel-tools,
+body:not(.panels-editing) .layout-toolbar .layout-hint,
+body:not(.panels-editing) .layout-toolbar .layout-reset { display:none; }
+body.panels-editing .layout-toolbar { justify-content:space-between; }
+body.panels-editing [data-panel-key] { outline:1px dashed #3a4855; outline-offset:5px; border-radius:16px; }
+[data-panel-edit][aria-pressed="true"] { color:#122018; background:var(--accent); border-color:var(--accent); }
 @media(max-width:1150px) {
   .workspace-wide,.workspace-narrow { grid-column:span 6; }
   .mc-side { display:grid; grid-template-columns:1fr 1fr; }
@@ -95,3 +124,14 @@
   .dashboard-risk { grid-template-columns:1fr 1fr; }
 }
 @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+/* 5.1: опростена графика и настройката за вида */
+.mc-chart.mc-simple { height:auto; overflow:visible; padding:6px 4px 2px; }
+.mc-chart.mc-simple svg { display:block; width:100%; height:auto; }
+.mc-loading { padding:24px 14px; }
+.chart-settings { max-width:1000px; margin-top:14px; }
+.choice-stack { flex-direction:column; align-items:stretch; margin:12px 0 4px; }
+.choice-stack label span { display:flex; flex-direction:column; gap:3px; text-align:left; }
+.choice-stack em { margin-left:0; }
+.risk-advice { margin-top:10px; padding:9px 11px; border-left:2px solid var(--accent); background:#c5f58c0a; font-size:12px; color:#c9d5da; line-height:1.55; }
+.risk-advice.full { border-left-color:var(--amber); background:#f6cd8e12; }
+.dashboard-status a.status-full { color:var(--amber); }

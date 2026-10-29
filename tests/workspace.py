@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        fixture = {"/api/state.php": {"release": "4.9", "costs": {"pairs": {}}}, "/data/meta.json": meta,
+        fixture = {"/api/state.php": {"release": "5.1", "costs": {"pairs": {}}}, "/data/meta.json": meta,
                    "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": [], "updated": meta["prices_updated"]}}.get(path)
         if fixture is not None:
             body = json.dumps(fixture).encode()
@@ -64,27 +64,39 @@ try:
                 route.abort()
 
         page.route("**/*", network)
+
+        def edit_mode(target=page):
+            # Бутоните за местене се показват само след „Подреди панелите“.
+            if target.locator('[data-panel-edit][aria-pressed="true"]').count() == 0:
+                target.locator('[data-panel-edit]').first.click()
+
+        signals_top = "document.querySelector('[data-panel-key=\"signals\"]').getBoundingClientRect().top + scrollY"
         page.goto(base + "/#/", wait_until="networkidle")
         page.wait_for_function("S.data?.ready && !!MC.chart", timeout=60000)
-        assert page.evaluate("document.querySelector('#mc-panel').getBoundingClientRect().top + scrollY") < 650
+        assert page.evaluate(signals_top) < 650, "Signals come first on the home page"
         page.evaluate("S.settings.balance=2000; saveSettings(); render()")
         board = page.locator('[data-panel-board="home"]')
         keys = lambda: board.evaluate("node => [...node.children].map(n=>n.dataset.panelKey)")
-        assert keys()[0] == "chart"
-        page.locator('[data-panel-key="signals"] .panel-grip').first.drag_to(page.locator('[data-panel-key="chart"]'), target_position={"x": 30, "y": 10})
-        assert keys().index("signals") < keys().index("chart"), keys()
+        assert keys()[:3] == ["signals", "side", "chart"], keys()
+        assert not page.locator('[data-panel-key="signals"] .panel-grip').first.is_visible(), "Move controls stay hidden until requested"
+        edit_mode()
+        page.locator('[data-panel-key="chart"] .panel-grip').first.drag_to(page.locator('[data-panel-key="signals"]'), target_position={"x": 30, "y": 10})
+        assert keys().index("chart") < keys().index("signals"), keys()
         order = keys()
         page.reload(wait_until="networkidle")
         page.wait_for_function("S.data?.ready && !!MC.chart")
         assert keys() == order, "Mouse order survives reload"
-        page.locator('[data-panel-key="signals"] [data-panel-move="down"]').first.click()
-        assert keys()[0] == "chart"
-        page.locator('[data-panel-key="signals"] .panel-grip').first.focus()
-        page.keyboard.press("ArrowUp")
+        edit_mode()
+        page.locator('[data-panel-key="chart"] [data-panel-move="down"]').first.click()
         assert keys()[0] == "signals"
-        page.locator('[data-panel-reset]').click()
+        page.locator('[data-panel-key="chart"] .panel-grip').first.focus()
+        page.keyboard.press("ArrowUp")
         assert keys()[0] == "chart"
-        print("OK: mouse drag, keyboard and button moves, persistence and reset")
+        page.locator('[data-panel-reset]').click()
+        assert keys()[0] == "signals"
+        page.locator('[data-panel-edit]').first.click()
+        assert not page.locator('[data-panel-reset]').is_visible(), "Done hides the layout controls again"
+        print("OK: hidden move controls, mouse drag, keyboard and button moves, persistence and reset")
 
         original = page.evaluate("({entry:MC.state.entry.id,signal:MC.state.sig?.id,model:MC.state.entry.tf,levels:JSON.stringify(MC.state.levels)})")
         for tf in ["M15", "H4", "D1", "H1"]:
@@ -125,8 +137,9 @@ try:
         }""")
         group = page.locator('[data-signal-group="XAUUSD"]')
         assert group.count() == 1
-        assert "3 сигнала" in group.locator('summary').inner_text()
-        group.locator('summary').click()
+        assert "3 сигнала" in group.locator('.signal-group-head').inner_text()
+        assert group.locator(':scope > .sig-grid > .sig-card').count() == 2, "One visible card per direction"
+        group.locator('.group-more > summary').click()
         assert group.locator('.sig-card').count() == 3
         group.locator('[data-model-focus]').first.click()
         assert page.evaluate("MC.state.sig.id") == "group-test-1"
@@ -134,6 +147,7 @@ try:
 
         for route in ["help", "risk", "help"]:
             page.goto(base + "/#/" + route, wait_until="networkidle")
+            edit_mode()
             auto_board = page.locator('[data-layout-storage]').filter(has=page.locator(':scope > [data-panel-key]')).last
             auto_keys = lambda: auto_board.evaluate("node => [...node.children].filter(n=>n.dataset.panelKey).map(n=>n.dataset.panelKey)")
             initial_order = auto_keys()
@@ -152,9 +166,10 @@ try:
                 assert not errors, errors
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto(base + "/#/", wait_until="networkidle")
-        assert page.evaluate("document.querySelector('#mc-panel').getBoundingClientRect().top + scrollY") < 650
-        page.locator('[data-panel-key="chart"] [data-panel-move="down"]').first.click()
-        assert keys()[0] != "chart"
+        assert page.evaluate(signals_top) < 650
+        edit_mode()
+        page.locator('[data-panel-key="signals"] [data-panel-move="down"]').first.click()
+        assert keys()[0] != "signals"
         page.locator('[data-panel-reset]').click()
         page.screenshot(path=str(shots / "mobile-home.png"), full_page=True)
         page.set_viewport_size({"width": 1440, "height": 1000})
@@ -170,11 +185,20 @@ try:
         touch.route("**/*", network)
         mobile = touch.new_page()
         mobile.goto(base + "/#/", wait_until="networkidle")
-        mobile.wait_for_function("S.data?.ready && !!MC.chart")
-        mobile.locator('[data-panel-key="chart"] [data-panel-move="down"]').first.tap()
-        assert mobile.locator('[data-panel-board="home"] > [data-panel-key]').first.get_attribute('data-panel-key') != 'chart'
+        # „Автоматично“: на телефон е опростената графика и библиотеката на TradingView не се тегли.
+        mobile.wait_for_function("S.data?.ready && !!document.querySelector('#mc-chart svg')")
+        assert mobile.evaluate("typeof LightweightCharts === 'undefined' && !MC.chart"), "Phones get the simple chart without loading the library"
+        # Без въведен баланс най-отгоре е сгънатият ред „Въведи баланс“; сигналите са първият панел след него.
+        first_panel = lambda: mobile.evaluate("[...document.querySelector('[data-panel-board=\"home\"]').children].map(n=>n.dataset.panelKey).filter(k=>k!=='account')[0]")
+        assert first_panel() == "signals"
+        mobile.locator('[data-panel-edit]').first.tap()
+        mobile.locator('[data-panel-key="signals"] [data-panel-move="down"]').first.tap()
+        assert first_panel() != "signals"
         mobile.locator('[data-panel-reset]').tap()
-        assert mobile.locator('[data-panel-board="home"] > [data-panel-key]').first.get_attribute('data-panel-key') == 'chart'
+        assert first_panel() == "signals"
+        mobile.evaluate("S.settings.chartMode='interactive'; saveSettings(); render()")
+        mobile.wait_for_function("!!MC.chart", timeout=60000)
+        print("OK: phone shows the simple chart by default and the interactive one when chosen in settings")
         touch.close()
         print("OK: touch controls move and reset panels in a mobile browser")
         browser.close()

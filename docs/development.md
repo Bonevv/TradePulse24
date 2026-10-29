@@ -115,8 +115,8 @@ location ~ ^/data/.*\.(php|phtml|phar|lock|tmp[0-9]*)$ { deny all; }
 След проверките и обновяване на `release.json`:
 
 ```sh
-python tests/package.py --output /tmp/TradePulse24-4.9-update.zip
-python tests/update.py /tmp/TradePulse24-4.9-update.zip
+python tests/package.py --output /tmp/TradePulse24-5.1-update.zip
+python tests/update.py /tmp/TradePulse24-5.1-update.zip
 ```
 
 Пакетът включва runtime файловете от списъка на версията и документацията. Тестът за обновяване пази примерни конфигурации, всички 24 ценови файла, работните резултати и частните копия. ZIP и SHA-256 файлът се публикуват отделно от основния клон с кода.

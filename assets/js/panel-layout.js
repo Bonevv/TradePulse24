@@ -1,12 +1,14 @@
 "use strict";
 
-/* Подредбата е лична настройка на браузъра. Местим самите панели, без копия на формите и графиките. */
+/* Подредбата е лична настройка на браузъра. Местим самите панели, без копия на формите и графиките.
+   Бутоните за местене се показват само след „Подреди панелите“, за да не пречат при четене на сигналите.
+   Версия 2: в 5.0 сигналите са първи по подразбиране, затова старата подредба (графиката отгоре) не се взема. */
 const PanelLayout = (() => {
-  const KEY = "tradepulse24-panels-v1";
+  const KEY = "tradepulse24-panels-v2";
   let saved = {}, drag = null, page = "dashboard";
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || "null");
-    if (raw?.version === 1 && raw.pages && typeof raw.pages === "object") saved = raw.pages;
+    if (raw?.version === 2 && raw.pages && typeof raw.pages === "object") saved = raw.pages;
   } catch (_) { /* Подредбата по подразбиране остава достъпна. */ }
   const items = (board) => [...board.children].filter((node) => node.matches("[data-panel-key]"));
   const notify = (message) => {
@@ -18,7 +20,7 @@ const PanelLayout = (() => {
     saved[board.dataset.layoutStorage] = items(board).map((node) => node.dataset.panelKey);
     const keys = Object.keys(saved);
     if (keys.length > 80) for (const key of keys.slice(0, keys.length - 80)) delete saved[key];
-    try { localStorage.setItem(KEY, JSON.stringify({ version: 1, pages: saved })); }
+    try { localStorage.setItem(KEY, JSON.stringify({ version: 2, pages: saved })); }
     catch (_) { notify("Панелите са преместени, но браузърът не позволи запазване на подредбата."); }
   }
   function buttons(board) {
@@ -27,7 +29,7 @@ const PanelLayout = (() => {
       for (const button of item.querySelectorAll(":scope > .panel-tools [data-panel-move], :scope > .panel > .panel-tools [data-panel-move]"))
         button.disabled = button.dataset.panelMove === "up" ? index === 0 : index === list.length - 1;
       const grip = item.querySelector(":scope > .panel-tools [data-panel-grip], :scope > .panel > .panel-tools [data-panel-grip]");
-      if (grip) grip.draggable = list.length > 1;
+      if (grip) grip.draggable = list.length > 1 && editing();
     });
   }
   function tools(item) {
@@ -65,9 +67,9 @@ const PanelLayout = (() => {
       const panels = [...root.querySelectorAll(".panel")].filter((panel) => !panel.parentElement.closest(".panel"));
       if (panels.length) {
         const board = document.createElement("div"); board.className = "workspace-grid"; board.dataset.panelBoard = "page";
-        panels.sort((a, b) => Number(b.id === "mc-panel") - Number(a.id === "mc-panel"));
+        // Редът е като в страницата: първо сигналът и решението за вход, графиката след тях.
         panels.forEach((panel, index) => {
-          const wrapper = document.createElement("div"), full = panel.id === "mc-panel" || panel.classList.contains("entry-now");
+          const wrapper = document.createElement("div"), full = panel.id === "mc-panel" || panel.classList.contains("entry-now") || panel.classList.contains("panel-full");
           wrapper.className = "workspace-item workspace-" + (full ? "full" : "half");
           const label = panel.querySelector(".kicker,h2,h3")?.textContent?.trim() || "Панел " + (index + 1);
           wrapper.dataset.panelKey = panel.id === "mc-panel" ? "chart" : label.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "-");
@@ -96,12 +98,21 @@ const PanelLayout = (() => {
     }
     if ((root.dataset?.panelBoard || root.querySelector("[data-panel-board]")) && !root.querySelector(".layout-toolbar")) {
       const toolbar = document.createElement("div"); toolbar.className = "layout-toolbar";
-      const hint = document.createElement("span"); hint.textContent = "Мести панелите от „Мести“ или със стрелките.";
-      const reset = document.createElement("button"); reset.type = "button"; reset.className = "tiny-btn"; reset.dataset.panelReset = ""; reset.textContent = "Върни подредбата";
-      toolbar.append(hint, reset);
+      const hint = document.createElement("span"); hint.className = "layout-hint"; hint.textContent = "Мести панелите от „Мести“ или със стрелките. Редът се пази в този браузър.";
+      const reset = document.createElement("button"); reset.type = "button"; reset.className = "tiny-btn layout-reset"; reset.dataset.panelReset = ""; reset.textContent = "Върни подредбата";
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "tiny-btn"; edit.dataset.panelEdit = "";
+      toolbar.append(hint, reset, edit);
       const heading = root.querySelector(":scope > .page-heading, :scope > .detail-head");
       if (heading) heading.after(toolbar); else root.prepend(toolbar);
     }
+    sync();
+  }
+  // Режимът за подреждане е общ за всички страници, докато е отворен сайтът.
+  const editing = () => document.body.classList.contains("panels-editing");
+  function sync() {
+    const on = editing();
+    for (const button of document.querySelectorAll("[data-panel-edit]")) { button.textContent = on ? "Готово" : "⠿ Подреди панелите"; button.setAttribute("aria-pressed", String(on)); }
+    for (const grip of document.querySelectorAll("[data-panel-grip]")) grip.draggable = on && grip.closest("[data-panel-board]") && items(grip.closest("[data-panel-board]")).length > 1;
   }
   function moved(item, board) {
     store(board); buttons(board);
@@ -121,10 +132,14 @@ const PanelLayout = (() => {
     drag = null;
   }
   document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-panel-edit]")) {
+      document.body.classList.toggle("panels-editing");
+      sync(); notify(editing() ? "Подреждане на панелите: местенето е включено." : "Подредбата е запазена."); return;
+    }
     const reset = event.target.closest("[data-panel-reset]");
     if (reset) {
       for (const key of Object.keys(saved)) if (key.startsWith(page + ":")) delete saved[key];
-      try { localStorage.setItem(KEY, JSON.stringify({ version: 1, pages: saved })); } catch (_) { /* Само текущата сесия. */ }
+      try { localStorage.setItem(KEY, JSON.stringify({ version: 2, pages: saved })); } catch (_) { /* Само текущата сесия. */ }
       render(); notify("Началната подредба е върната."); return;
     }
     const button = event.target.closest("[data-panel-move]");

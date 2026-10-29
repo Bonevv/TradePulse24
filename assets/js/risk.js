@@ -165,6 +165,20 @@ function currencyOverLimit(stats, limit = JOURNAL.plan.currency) {
   return Object.entries(stats.byCurrency || {}).filter(([, risk]) => Math.abs(risk) >= limit - 1e-9).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 }
 
+/** Колко сделки едновременно позволяват личните лимити при текущия риск на сделка (по подразбиране 2% ÷ 0,5% = 4). */
+function tradeCapacity(plan = JOURNAL.plan, risk = S.settings.risk) {
+  const r = Number(risk) > 0 ? Number(risk) : 0.5, fit = (limit) => Math.floor(Number(limit) / r + 1e-9);
+  return { total: fit(plan.open), currency: fit(plan.currency), pair: fit(plan.instrument), risk: r };
+}
+/** Съвет за най-много едновременни сделки и колко са отворени сега по дневника. */
+function capacityAdvice(stats = RiskJournal.stats(journalTrades())) {
+  const cap = tradeCapacity(), plan = JOURNAL.plan, open = stats.open.length, pct = (v) => F.num(2).format(v) + "%";
+  if (cap.total < 1) return `<div class="risk-advice full"><strong>Рискът на една сделка (${pct(cap.risk)}) е над лимита за отворен риск (${pct(plan.open)}).</strong> Намали риска на сделка в „Настройки“ или вдигни лимита в „Риск и дневник“.</div>`;
+  const full = open >= cap.total;
+  return `<div class="risk-advice ${full ? "full" : ""}"><strong>${full ? `Достигнат е максимумът: ${open} от ${cap.total} отворени сделки.` : `Съвет: най-много ${cap.total} ${cap.total === 1 ? "сделка" : "сделки"} едновременно · сега ${open}.`}</strong>
+    ${full ? "Новите сигнали само наблюдавай, докато не затвориш позиция. " : ""}При риск ${pct(cap.risk)} на сделка и лимит ${pct(plan.open)} общ отворен риск. От тях до ${Math.max(cap.currency, 0)} с една и съща валута и до ${Math.max(cap.pair, 0)} в един инструмент; почти всички двойки са с USD, затова на практика това е лимитът за долара. Броят е по позициите, записани в дневника.</div>`;
+}
+
 function portfolioRiskNotice() {
   const stats = RiskJournal.stats(journalTrades()), limit = JOURNAL.plan.instrument;
   const over = Object.entries(stats.byPair).filter(([, risk]) => risk >= limit), currencies = currencyOverLimit(stats);
@@ -210,6 +224,7 @@ function viewRisk() {
     ${warnings.length ? `<div class="risk-notice">${warnings.map(esc).join("<br>")}</div>` : ""}
     <section class="panel"><h2>Риск по инструменти</h2><p>${Object.entries(stats.byPair).map(([pair, risk]) => `${FX.PAIRS[pair].name}: <strong>${risk.toFixed(2)}%</strong>`).join(" · ") || "Няма отчетени отворени позиции."}</p><p class="what">Сборът включва само позициите в личния дневник. Частичните изходи намаляват оставащия обем. Текущият стоп се използва, когато си го въвел; иначе се запазва първоначалният риск. Противоположните сделки също имат риск и не се нетират.</p>
       <h2>Нетен риск по валута</h2><p>${Object.entries(stats.byCurrency).filter(([, risk]) => Math.abs(risk) > 1e-9).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([code, risk]) => `${esc(currencyName(code))}: <strong>${Math.abs(risk).toFixed(2)}%</strong> ${currencySide(risk)}`).join(" · ") || "Няма нетен риск към отделна валута."}</p><p class="what">Покупка на EUR/USD, GBP/USD и AUD/USD е три пъти продажба на долара: рискът към USD се събира. Тук противоположните посоки се компенсират, за да се види реалният залог към всяка валута.</p></section>
+    ${capacityAdvice(stats)}
     <div class="risk-metrics">${[["Дневни загуби", stats.daily.toFixed(2) + "% / " + plan.daily + "%"], ["Седмични загуби", stats.weekly.toFixed(2) + "% / " + plan.weekly + "%"], ["Отворен риск", stats.openRisk.toFixed(2) + "% / " + plan.open + "%"], ["Среден резултат", stats.averageR === null ? "Още няма сделки" : fmtR(stats.averageR)]].map(([label, value]) => `<section class="panel"><p class="kicker">${label}</p><strong>${value}</strong></section>`).join("")}</div>
     <p class="what">Лимитите обхващат дневните и суинг сделките в ${esc(S.settings.currency)}. Процентите са сбор спрямо отчетения риск при всеки вход. Печалбите не увеличават дневния бюджет за загуби. Денят и седмицата се отчитат по софийско време.</p>
     <div class="grid-2"><section class="panel"><h2>Лични граници</h2><form id="risk-plan" class="settings-form">${[["daily", "Дневен лимит на загубите (%)"], ["weekly", "Седмичен лимит на загубите (%)"], ["open", "Общ отворен риск (%)"], ["instrument", "Отворен риск за един инструмент (%)"], ["currency", "Нетен риск към една валута (%)"]].map(([key, label]) => `<div class="form-field"><label for="risk-${key}">${label}</label><input id="risk-${key}" name="${key}" type="number" min="0.1" max="50" step="0.1" value="${plan[key]}" required></div>`).join("")}<button class="btn btn-outline">Запази границите</button></form>
