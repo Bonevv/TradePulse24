@@ -128,7 +128,8 @@ const utc = (t) => new Date(t * 1000).toISOString().slice(0, 19);
 export class FeedService {
   constructor(env, storage, deps = {}) {
     this.env = env; this.storage = storage; this.kv = env.FEED;
-    this.fetch = deps.fetch || fetch; this.now = deps.now || (() => Math.floor(Date.now() / 1000));
+    // Runtime fetch изисква глобалния контекст; this.fetch(...) иначе дава Illegal invocation.
+    this.fetch = deps.fetch || ((...args) => globalThis.fetch(...args)); this.now = deps.now || (() => Math.floor(Date.now() / 1000));
     this.sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.ready = storage.get("state").then((state) => { this.state = state || { version: 1, providers: {}, quotes: {}, d1: {}, attempt: 0, news_at: 0 }; });
     this.flight = null;
