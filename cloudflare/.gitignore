@@ -1,0 +1,7 @@
+node_modules/
+wrangler.deploy.json
+.wrangler/
+.build/
+.dev.vars
+.dev.vars.*
+.env

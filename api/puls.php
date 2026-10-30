@@ -2,12 +2,22 @@
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
 require __DIR__ . '/puls-lib.php';
+require __DIR__ . '/cloudflare.php';
 header('Cache-Control: no-store');
 
 try {
     $config = cfg(); $now = time();
     $news = read_json(DATA_DIR . '/news.json', ['events' => [], 'updated' => 0]);
     $meta = read_json(DATA_DIR . '/meta.json', []);
+    if (cloudflare_feed_url($config) !== '') {
+        try {
+            $shared = cloudflare_snapshot($config);
+            $news = $shared['news']; $meta = $shared['meta'];
+        } catch (Throwable $error) {
+            // Старите локални цени не заместват общия източник при отказ.
+            $news = ['events' => [], 'updated' => 0]; $meta = [];
+        }
+    }
     $path = private_dir() . '/puls-cache.json';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') respond_json(puls_status($config, $news, $meta, $path, $now));
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') respond_json(['ok' => false, 'error' => 'Само GET или POST', 'code' => 'method_not_allowed'], 405);

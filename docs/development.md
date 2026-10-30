@@ -1,6 +1,6 @@
 # Работа по TradePulse24
 
-PHP 7.4+ с cURL и Apache 2.4 са достатъчни за сайта. Препоръчва се PHP 8.x. Няма Composer или npm зависимости. Node.js се използва само за проверките при разработка; на хостинга не е нужен.
+PHP 7.4+ с cURL и Apache 2.4 са достатъчни за сайта. Препоръчва се PHP 8.x. PHP сайтът няма Composer или npm зависимости. Папката `cloudflare/` има отделни зависимости за изграждане и локални проверки. Node.js не е нужен на PHP хостинга.
 
 ## Настройки
 
@@ -37,6 +37,7 @@ node tests/entry.js
 node tests/chart.js
 node tests/chart-context.js
 php tests/prices.php
+php tests/cloudflare.php
 python tests/release.py
 ```
 
@@ -57,6 +58,7 @@ node tests/candidates.js
 ```sh
 python tests/browser.py
 python tests/workspace.py
+python tests/feed-browser.py
 ```
 
 Тестът създава временно копие на сайта и отделен Apache на порт 8081. Не копира локалните конфигурации. Проверява входа, черновите, истинския Web Worker, версии, публикуване, дневника, въпросите и последващия разговор, избор на посока, общия дневен обзор, безопасното показване на отговорите, защитата на PHP файловете и мобилния изглед. След края почиства своя процес и временните файлове.
@@ -101,6 +103,7 @@ python tests/workspace.py
 ```nginx
 location ^~ /data/private/ { deny all; }
 location ^~ /tests/ { deny all; }
+location ^~ /cloudflare/ { deny all; }
 location ~ (^|/)\. { deny all; }
 location ~ ^/api/(?!(?:cron|save|puls|state)\.php$) { deny all; }
 location ~ ^/(README|AGENTS|CHANGELOG)\.md$ { deny all; }
@@ -115,8 +118,8 @@ location ~ ^/data/.*\.(php|phtml|phar|lock|tmp[0-9]*)$ { deny all; }
 След проверките и обновяване на `release.json`:
 
 ```sh
-python tests/package.py --output /tmp/TradePulse24-5.2.1-update.zip
-python tests/update.py /tmp/TradePulse24-5.2.1-update.zip
+python tests/package.py --output /tmp/TradePulse24-5.3-update.zip
+python tests/update.py /tmp/TradePulse24-5.3-update.zip
 ```
 
 Пакетът включва runtime файловете от списъка на версията и документацията. Тестът за обновяване пази примерни конфигурации, всички 24 ценови файла, работните резултати и частните копия. ZIP и SHA-256 файлът се публикуват отделно от основния клон с кода.
@@ -124,3 +127,21 @@ python tests/update.py /tmp/TradePulse24-5.2.1-update.zip
 `workspace.py` проверява реално местене с мишка, клавиатура и бутони, ред след презареждане, четирите периода на преглед, неизменни сигнални нива, историята от локални JSON и размери от 320 до 1440 пиксела. `chart-context.js` покрива времето на маркерите при друг период и модела с вход преди изтекъл срок при стари данни.
 
 Проверката в `workspace.py` включва актуални цени при отказ на резервен доставчик, стари и липсващи цени, безопасни публични съобщения и стари препратки към доставчици в кеша на Пулс. Техническите грешки остават в административните проверки; публичният интерфейс показва състоянието на данните.
+
+
+## Cloudflare Worker
+
+[Настройване и публикуване](cloudflare.md). Локалните проверки не ползват лични ключове и не се свързват с ценови доставчици:
+
+```sh
+cd cloudflare
+npm ci
+npm test
+npm run check
+```
+
+`npm test` проверява първоначалния внос на всичките 24 истории, паузите и общите броячи, резервния източник, часовете на свещите, CORS, ETag и административния достъп. Отделна проверка стартира действителния Cloudflare runtime чрез Miniflare с KV и SQLite Durable Object. `check` прави пробно изграждане без публикуване. `npm run deploy` е отделно действие в собствения Cloudflare профил и изисква валидно `FEED_KV_ID`.
+
+`tests/feed-browser.py` от корена на проекта стартира два локални сървъра. Проверява четенето през друг origin, условния отговор 304, една споделена заявка за трите исторически периода и отказа на общия кеш. При отказ не се подменят времената на цените и няма местно теглене. `tests/cloudflare.php` проверява валидацията, сървърния кеш и изолиран cron с изрично забранен ценови път.
+
+`api/cloudflare.php` свързва PHP с общите данни. `api/state.php` публикува само адреса, версията и профила на разходите. `cloudflare/src/worker.mjs` маршрутизира четенето към KV; `feed.mjs` е единственият източник на ценови заявки. `FEED_ADMIN_TOKEN` се изпраща в Authorization header. Не записвай токени в URL, логове или тестови файлове.

@@ -1226,6 +1226,7 @@ function typing() {
 }
 
 const JSON_CACHE = new Map();
+const FEED_HISTORY = new Map();
 async function getJSON(path, fallback) {
   const controller = typeof AbortController === "undefined" ? null : new AbortController();
   const timeout = controller ? setTimeout(() => controller.abort(), 15000) : null;
@@ -1278,7 +1279,7 @@ async function recoverTracked(result, tracked, timestamp, meta) {
   if (!missing.length) return;
   const prices = {};
   await Promise.all([...new Set(missing.map((signal) => signal.pair))].flatMap((pair) => ["M15", "H1", "D1"].map(async (tf) => {
-    const data = await getJSON(`data/prices/${pair}_${tf}.json`, { bars: [] });
+    const data = await getPriceJSON(pair, tf);
     (prices[pair] = prices[pair] || {})[tf] = Array.isArray(data?.bars) ? data.bars : [];
   })));
   const ids = new Set(missing.map((signal) => signal.id));
@@ -1302,20 +1303,57 @@ function publicDataMessages(meta) {
   return messages;
 }
 
+function validSharedSnapshot(data) {
+  if (data?.schema !== "tradepulse-feed-v1" || !data.meta || !data.recent?.prices || !Array.isArray(data.news?.events)) return false;
+  if (!Number.isFinite(data.meta.updated) || data.meta.updated > now() + 60 || !data.meta.quotes || typeof data.meta.quotes !== "object") return false;
+  for (const pair of FX.PAIR_KEYS) for (const tf of ["M15", "H1", "D1"]) {
+    const bars = data.recent.prices[pair]?.[tf];
+    if (!Array.isArray(bars) || !bars.length || bars.length > 2000) return false;
+    const last = bars.at(-1);
+    if (!Array.isArray(last) || last.length !== 5 || !last.every(Number.isFinite) || last[0] + FX.TIMEFRAMES[tf].seconds > now()) return false;
+  }
+  return Object.entries(data.meta.quotes).every(([pair, q]) => FX.PAIRS[pair] && Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0 && q.time <= now() + 60);
+}
+
+/** Една заявка на инструмент споделя историята между графиката, Лабораторията и проследяването. */
+async function getPriceJSON(pair, tf) {
+  if (!FX.PAIRS[pair] || !["M15", "H1", "D1"].includes(tf)) return null;
+  if (!S.feedURL) return getJSON(`data/prices/${pair}_${tf}.json`, null);
+  const key = `${S.feedURL}|${S.meta?.updated || 0}|${pair}`;
+  if (!FEED_HISTORY.has(key)) {
+    FEED_HISTORY.set(key, getJSON(`${S.feedURL}/history/${pair}`, null));
+    if (FEED_HISTORY.size > 8) FEED_HISTORY.delete(FEED_HISTORY.keys().next().value);
+  }
+  const archive = await FEED_HISTORY.get(key);
+  if (!archive) FEED_HISTORY.delete(key);
+  return archive?.pair === pair && Array.isArray(archive.prices?.[tf]) ? { bars: archive.prices[tf] } : null;
+}
+
 /** Зарежда данните; без текущи цени показва само историческия каталог. */
 let loadSequence = 0;
 async function load() {
   const seq = ++loadSequence;
   try {
-  const [meta, rawNews, saved, recent, custom, bundled, costs] = await Promise.all([
-    getJSON("data/meta.json", null), getJSON("data/news.json", { events: [] }), getJSON("data/results.json", null),
-    getJSON("data/recent.json", null), getJSON("data/custom.json", { strategies: [] }),
-    getJSON("data/catalog.json", null), getJSON("api/state.php", { costs: {} }),
+  const costs = await getJSON("api/state.php", { costs: {}, feed_url: S.feedURL || "" });
+  if (seq !== loadSequence) return;
+  const feedURL = typeof costs?.feed_url === "string" ? costs.feed_url.replace(/\/$/, "") : "";
+  if (feedURL !== S.feedURL) { S.feedSnapshot = null; FEED_HISTORY.clear(); }
+  S.feedURL = feedURL;
+  const [localMeta, localNews, saved, localRecent, custom, bundled, shared] = await Promise.all([
+    getJSON("data/meta.json", null), feedURL ? null : getJSON("data/news.json", { events: [] }), getJSON("data/results.json", null),
+    feedURL ? null : getJSON("data/recent.json", null), getJSON("data/custom.json", { strategies: [] }),
+    getJSON("data/catalog.json", null), feedURL ? getJSON(feedURL + "/snapshot", null) : null,
   ]);
   if (seq !== loadSequence) return;
+  if (feedURL && validSharedSnapshot(shared)) S.feedSnapshot = shared;
+  const snapshot = feedURL ? S.feedSnapshot : null;
+  const meta = feedURL ? snapshot ? { ...snapshot.meta, launch: localMeta?.launch || 0 } : null : localMeta;
+  const recent = feedURL ? snapshot?.recent || null : localRecent;
+  const rawNews = feedURL ? snapshot?.news || { events: [], updated: 0 } : localNews;
   const news = { ...(rawNews || {}), events: Array.isArray(rawNews) ? rawNews : Array.isArray(rawNews?.events) ? rawNews.events : [] };
   news.events = news.events.filter((e) => e && typeof e.title === "string" && Number.isFinite(e.time));
   clearTimeout(S.timer);
+  if (feedURL && meta?.updated !== S.meta?.updated) FEED_HISTORY.clear();
   S.meta = meta;
   S.costProfile = FX.costs.normalize(costs?.costs || {});
   S.customSpecs = Array.isArray(custom?.strategies) ? custom.strategies : [];

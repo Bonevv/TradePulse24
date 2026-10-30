@@ -78,7 +78,7 @@ async function loadChartHistory(pair) {
     try {
       const prices = {};
       await Promise.all(["M15", "H1", "D1"].map(async (tf) => {
-        const file = await getJSON(`data/prices/${pair}_${tf}.json`, null);
+        const file = await getPriceJSON(pair, tf);
         prices[tf] = Array.isArray(file?.bars) ? file.bars : [];
       }));
       if (!Object.values(prices).some((bars) => bars.length > 120)) throw new Error("Няма достатъчно записана история за този инструмент.");

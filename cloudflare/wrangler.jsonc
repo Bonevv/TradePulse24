@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tradepulse24-feed",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "triggers": { "crons": ["2,17,32,47 * * * *"] },
+  "kv_namespaces": [
+    { "binding": "FEED", "id": "00000000000000000000000000000000" }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "COORDINATOR", "class_name": "FeedCoordinator" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["FeedCoordinator"] }],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://test-systems.gt.tc",
+    "REFRESH_MINUTES": "15",
+    "NIGHT_REFRESH_MINUTES": "180"
+  },
+  "observability": { "enabled": false }
+}

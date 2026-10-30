@@ -1,7 +1,7 @@
 /* Версии и архив на вградените правила. Старите сигнали запазват своята стратегия. */
 (function (FX) {
   "use strict";
-  FX.RELEASE = "5.2.1";
+  FX.RELEASE = "5.3";
   const retired = {"lib_golden_cross": ["D1"], "lib_macd_psar_ema": ["M15"], "lib_rsi_30_70": ["H1"], "lib_stoch": ["H1"], "lib_stoch_rsi_macd": ["M15", "H1"], "lib_cci": ["H1", "H4"], "lib_wpr": ["H1"], "lib_bb_revert": ["H1"], "lib_pinbar": ["D1"], "otskok_ma": ["H1"], "graal": ["H4"], "fake2b": ["H1", "H4", "D1"], "dmi": ["H4", "D1"], "bb_rsi": ["M15", "H1"], "ema_pullback": ["H1"], "lib_ema_htf": ["H1"]};
   const added = {"lib_ema_9_21": ["D1"], "lib_supertrend_ema": ["D1"], "lib_triple_supertrend": ["H4"], "lib_psar_ema": ["D1"], "lib_ssl": ["D1"], "lib_heikin_ema": ["H4"], "lib_turtle_55": ["H4"], "lib_bb_breakout": ["D1"], "lib_squeeze_break": ["D1"], "lib_momentum": ["D1"], "lib_donchian_trend": ["H4", "D1"], "lib_ema_pullback_trend": ["H4"], "lib_rsi_breakout": ["H4", "D1"], "lib_cci_trend": ["H4", "D1"], "lib_stoch_trend": ["H4", "D1"], "lib_psar_adx": ["D1"], "lib_macd_trend": ["H4", "D1"], "lib_triple_ema": ["H4", "D1"], "lib_kijun_trend": ["H4"], "lib_ema_htf": ["H1", "H4"], "lib_keltner_trend": ["H4", "D1"], "lib_adx_ema": ["D1"], "lib_ha_trend": ["H4"]};
   for (const strat of FX.CODED.concat(FX.LIBRARY)) {

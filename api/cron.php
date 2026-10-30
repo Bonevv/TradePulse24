@@ -1,11 +1,12 @@
 <?php
 /*
- * Обновяване на данните. Пуска се от cron на всеки 20 минути:
+ * Обновяване на данните. Пуска се от cron; например проверка на всеки 5 минути:
  *     php /път/до/сайта/api/cron.php
  * или, ако хостингът позволява само уеб адрес:
  *     https://твоят-сайт.bg/api/cron.php?token=ТАЙНИЯТ_КЛЮЧ
  *
- * Какво прави:
+ * При cloudflare_feed_url само синхронизира общия кеш, без ценови API заявки.
+ * Без него:
  * 1. По график (делнично 07–22 ч. на 15 мин, нощем на 3 часа, през уикенда не) сваля 15-минутните свещи
  *    за 8-те инструмента от Tiingo, а при отказ — от Twelve Data, и от тях сглобява часовите.
  *    Хостингът може да пуска файла и по-често: когато още не е време, той не тегли цени. &force=1 тегли веднага.
@@ -15,6 +16,7 @@
  */
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
+require __DIR__ . '/cloudflare.php';
 
 if (PHP_SAPI !== 'cli') {
     header('Content-Type: text/plain; charset=utf-8');
@@ -66,6 +68,17 @@ $meta['quotes'] = $meta['quotes'] ?? [];
 $meta['d1_updated'] = $meta['d1_updated'] ?? [];
 $errors = [];
 $config = cfg();
+if (cloudflare_feed_url($config) !== '') {
+    try {
+        sync_cloudflare_snapshot(cloudflare_snapshot($config));
+        say('Готово: общите данни са синхронизирани.');
+    } catch (Throwable $error) {
+        http_response_code(503);
+        say('Общите данни не са синхронизирани. Провери настройките и повтори по-късно.');
+    }
+    flock($lock, LOCK_UN);
+    exit;
+}
 $sources = array_values(array_filter(['tiingo', 'twelve'], 'source_ready')); // Tiingo е основен, Twelve Data — резервен
 $meta['blocked'] = is_array($meta['blocked'] ?? null) ? $meta['blocked'] : [];
 unset($meta['blocked_until']); // общата блокировка от версии до 5.1 вече не се ползва

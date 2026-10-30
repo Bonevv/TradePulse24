@@ -27,3 +27,8 @@ DirectoryIndex index.html
 <If "%{REQUEST_URI} =~ m#(^|/)\.#">
   Require all denied
 </If>
+
+# Worker кодът се публикува в Cloudflare, а не през PHP сайта.
+<If "%{REQUEST_URI} =~ m#(^|/)cloudflare(/|$)#">
+  Require all denied
+</If>

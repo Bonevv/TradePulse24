@@ -78,7 +78,7 @@ function cfg(): array
         }
         $c = require __DIR__ . '/config.php';
         if (is_file(__DIR__ . '/config.local.php')) $c = array_merge($c, require __DIR__ . '/config.local.php');
-        foreach (['TIINGO_API_KEY' => 'tiingo_key', 'TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GROQ_API_KEY' => 'groq_key', 'GROQ_MODEL' => 'groq_model'] as $variable => $key) {
+        foreach (['CLOUDFLARE_FEED_URL' => 'cloudflare_feed_url', 'TIINGO_API_KEY' => 'tiingo_key', 'TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GROQ_API_KEY' => 'groq_key', 'GROQ_MODEL' => 'groq_model'] as $variable => $key) {
             $value = getenv($variable);
             if ($value !== false && $value !== '') $c[$key] = $value;
         }

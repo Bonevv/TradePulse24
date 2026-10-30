@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        fixture = {"/api/state.php": {"release": "5.2.1", "costs": {"pairs": {}}}, "/data/meta.json": meta,
+        fixture = {"/api/state.php": {"release": "5.3", "costs": {"pairs": {}}}, "/data/meta.json": meta,
                    "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": [], "updated": meta["prices_updated"]}}.get(path)
         if fixture is not None:
             body = json.dumps(fixture).encode()

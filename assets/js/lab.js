@@ -207,9 +207,8 @@ async function labLoadHistory() {
     for (const p of FX.PAIR_KEYS) for (const tf of ["M15", "H1", "D1"]) files.push([p, tf]);
     let done = 0, bars = 0;
     await Promise.all(files.map(async ([p, tf]) => {
-      const r = await fetch(`data/prices/${p}_${tf}.json`, { cache: "no-cache" });
-      if (!r.ok) throw new Error(`${p} ${tf}: ${r.status}`);
-      const data = await r.json();
+      const data = await getPriceJSON(p, tf);
+      if (!Array.isArray(data?.bars)) throw new Error(`${p} ${tf}: няма достъпна история`);
       (prices[p] = prices[p] || {})[tf] = data.bars || [];
       bars += (data.bars || []).length;
       done++;

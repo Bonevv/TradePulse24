@@ -2,6 +2,8 @@
 // Копирай като api/config.php. Локалните настройки не се качват в Git.
 // Ключовете и паролите се задават в средата на PHP или в api/config.local.php.
 return [
+    // По желание: публичният HTTPS адрес на общия Cloudflare Worker. PHP не тегли цени от доставчици при зададен адрес.
+    'cloudflare_feed_url' => getenv('CLOUDFLARE_FEED_URL') ?: '',
     // Цени: Tiingo е основният източник (безплатен ключ от tiingo.com), Twelve Data — резервен. Стига и един от двата.
     'tiingo_key' => getenv('TIINGO_API_KEY') ?: '',
     'twelvedata_key' => getenv('TWELVEDATA_API_KEY') ?: '',

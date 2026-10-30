@@ -34,7 +34,7 @@ with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as
 Пакетът обновява кода и data/catalog.json. Не съдържа api/config.php, api/config.local.php, data/prices/, data/results.json, data/custom.json, data/costs.json, data/meta.json, data/recent.json, data/news.json или лични чернови и резервни копия.
 
 Подредбата на панелите се пази само в браузъра. „Върни подредбата“ не изтрива дневници или настройки на сметката.
-Подробните указания са в docs/updating.md.
+Подробните указания са в docs/updating.md. Общото обновяване през Cloudflare се настройва отделно по docs/cloudflare.md; Worker кодът е в GitHub, а не в този PHP пакет.
 """)
 digest = hashlib.sha256(args.output.read_bytes()).hexdigest()
 args.output.with_suffix(".sha256").write_text(digest + "  " + args.output.name + "\n")

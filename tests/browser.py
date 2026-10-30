@@ -24,7 +24,7 @@ def digest(path):
 with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
     temporary = Path(folder)
     site = temporary / "site"
-    shutil.copytree(ROOT, site, ignore=shutil.ignore_patterns(".git", "*.log", "config.php", "config.local.php", "workspace.json", "*-cache.json", "*.lock", "backups", "costs.json"))
+    shutil.copytree(ROOT, site, ignore=shutil.ignore_patterns(".git", "node_modules", ".wrangler", ".build", ".dev.vars*", "*.log", "config.php", "config.local.php", "workspace.json", "*-cache.json", "*.lock", "backups", "costs.json"))
     shutil.copyfile(site / "api/config.example.php", site / "api/config.php")
     (site / "data/news.json").write_text(json.dumps({"events": [{"id": "browser-boc", "title": "BOC Monetary Policy Report", "currency": "CAD", "impact": "high", "time": int(time.time()) + 3600, "forecast": "", "previous": "", "actual": None, "source": "Тестов календар"}], "updated": int(time.time())}))
     config = (RUNTIME / "httpd.conf").read_text()
@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
     config = config.replace(str(RUNTIME / "logs/apache-error.log"), str(temporary / "apache-error.log"))
     (temporary / "httpd.conf").write_text(config)
     process_env = os.environ.copy()
-    for secret in ["GROQ_API_KEY", "GROQ_MODEL", "TWELVEDATA_API_KEY", "TP24_CRON_TOKEN"]:
+    for secret in ["GROQ_API_KEY", "GROQ_MODEL", "TIINGO_API_KEY", "TWELVEDATA_API_KEY", "TP24_CRON_TOKEN", "CLOUDFLARE_FEED_URL"]:
         process_env.pop(secret, None)
     process_env.update({"TP24_ADMIN_PASSWORD": "local-browser-test-only", "LD_LIBRARY_PATH": str(RUNTIME / "runtime/usr/lib/x86_64-linux-gnu"), "PHP_INI_SCAN_DIR": ""})
     process = subprocess.Popen([str(RUNTIME / "runtime/usr/sbin/apache2"), "-f", str(temporary / "httpd.conf"), "-DFOREGROUND"], env=process_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
