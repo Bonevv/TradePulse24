@@ -3,7 +3,17 @@
 const PULS = { overview: { status: null, loading: false, generating: false, checked: 0 }, selection: new Map(), chats: new Map() };
 const pulsTime = (t) => t ? new Intl.DateTimeFormat("bg-BG", { timeZone: "Europe/Sofia", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(t * 1000)) : "неизвестен час";
 const pulsToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Sofia", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const pulsError = (error) => `${error.message || "Не получихме отговор. Опитай по-късно."}${error.code ? " · Код: " + error.code : ""}`;
+const pulsError = (error) => {
+  const messages = {
+    not_configured: "Пулс още не е включен за този сайт. Обясненията под новините остават достъпни.",
+    provider_limit: "Пулс временно е зает. Опитай отново по-късно.",
+    site_limit: "Пулс временно е зает. Опитай отново по-късно.",
+    stale_calendar: "Календарът не е обновяван скоро. Изчакай актуални данни, преди да поискаш обзор.",
+    invalid_question: "Напиши по-кратък въпрос и опитай отново.",
+    timeout: "Изчакването приключи. Опитай по-късно; календарът остава достъпен.",
+  };
+  return messages[error?.code] || "Не получихме отговор от Пулс. Опитай отново по-късно; календарът остава достъпен.";
+};
 
 async function pulsRequest(body = null) {
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -21,10 +31,18 @@ async function pulsRequest(body = null) {
 }
 
 function pulsSources(response) {
-  const sources = (response.sources || []).filter((source) => {
-    try { const u = new URL(source.url); return u.protocol === "https:" && ["nfs.faireconomy.media", "twelvedata.com"].includes(u.hostname); } catch (_error) { return false; }
-  });
-  return `<p class="what puls-sources">${sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)}</a> (${esc(pulsTime(s.updated))})`).join(" · ")}<br>Календар: ${esc(pulsTime(response.data_updated))} · Обяснение: ${esc(pulsTime(response.generated_at))} · Europe/Sofia${response.cached ? " · запазен отговор" : ""}</p>`;
+  const sources = (response.sources || []).map((source) => {
+    // Приемаме и стари кеширани отговори, без да показваме доставчика на котировки.
+    if (source.name === "Пазарни котировки" && !source.url) return { ...source, url: null };
+    try {
+      const u = new URL(source.url);
+      if (u.protocol !== "https:") return null;
+      if (["twelvedata.com", "www.twelvedata.com", "tiingo.com", "www.tiingo.com"].includes(u.hostname))
+        return { name: "Пазарни котировки", url: null, updated: source.updated };
+      return u.hostname === "nfs.faireconomy.media" ? source : null;
+    } catch (_error) { return null; }
+  }).filter(Boolean);
+  return `<p class="what puls-sources">${sources.map((s) => `${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)}</a>` : esc(s.name)} (${esc(pulsTime(s.updated))})`).join(" · ")}<br>Календар: ${esc(pulsTime(response.data_updated))} · Обяснение: ${esc(pulsTime(response.generated_at))} · Europe/Sofia${response.cached ? " · запазен отговор" : ""}</p>`;
 }
 const pulsList = (items) => `<ul class="puls-points">${(items || []).map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
 
@@ -35,7 +53,7 @@ function pulsOverview() {
   const content = overview?.content;
   return `<section class="panel puls-overview" aria-label="Дневен Forex обзор"><div class="panel-head"><div><p class="kicker">ПУЛС · ДНЕВЕН ОБЗОР</p><h2>Forex обзор — ${esc(date)}</h2></div>
     <button type="button" class="tiny-btn" data-puls-overview ${state.loading || state.generating ? "disabled" : ""}>${state.loading || state.generating ? "Подготвям…" : "Провери за обновяване"}</button></div>
-    ${status?.error ? `<p class="risk-notice" role="status">${esc(status.error)}${status.code ? ` · Код: ${esc(status.code)}` : ""}</p>` : ""}
+    ${status?.error ? `<p class="risk-notice" role="status">${esc(pulsError(status))}</p>` : ""}
     ${status?.calendar_changed ? '<p class="warn-line">Календарът е променен след изготвянето на този обзор. Провери актуалните часове и резултати по-долу; за конкретното събитие можеш да попиташ Пулс.</p>' : ""}
     ${content ? `<p class="puls-answer">${esc(content.summary)}</p>${pulsList(content.focus)}<div class="puls-plans">
       <div class="${S.settings.style === "day" ? "selected" : ""}"><h3>При дневна търговия</h3>${pulsList(content.day)}</div>
@@ -104,7 +122,7 @@ function viewNewsAnalysis(id) {
       ${chat.error ? `<p class="risk-notice" role="alert">${esc(pulsError(chat.error))}</p>` : ""}
       <form id="puls-question-form"><label for="puls-question">Какво искаш да разбереш?</label><textarea id="puls-question" maxlength="500" rows="3" placeholder="Например: Какво да следя около тази новина?">${esc(chat.draft)}</textarea>
         <div class="chips-row"><button class="btn btn-primary" ${chat.busy ? "disabled" : ""}>${chat.busy ? "Подготвям отговора…" : "Попитай Пулс"}</button>${chat.messages.length ? '<button class="btn btn-outline" type="button" data-puls-clear>Нов разговор</button>' : ""}</div></form>
-      <p class="what">До Groq се изпращат новината, въпросът, последните няколко съобщения и избраният ценови модел. Балансът, паролата, дневникът и личните потвърждения за изпълнение остават при теб.</p></section>`;
+      <p class="what">За отговора към външна услуга се изпращат новината, въпросът, последните няколко съобщения и избраният ценови модел. Балансът, паролата, дневникът и личните потвърждения за изпълнение остават при теб.</p></section>`;
 }
 
 async function pulsAsk() {

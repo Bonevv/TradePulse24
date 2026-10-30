@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
                 page.goto(base + "/#/" + route, wait_until="networkidle")
                 page.wait_for_function("S.data?.ready")
                 assert page.locator("#mc-panel").count() == 1, route
-                assert "TradingView" in page.locator("#mc-panel").inner_text() or "cron.php" in page.locator("#mc-panel").inner_text(), route
+                assert "TradingView" in page.locator("#mc-panel").inner_text() or "ценови данни" in page.locator("#mc-panel").inner_text(), route
                 assert not errors, (route, errors)
             page.goto(base + "/#/workshop", wait_until="networkidle")
             page.locator("#lab-pass").fill("local-browser-test-only")
@@ -226,7 +226,9 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             page.locator('#puls-question').fill("Какво да следя?")
             page.get_by_role("button", name="Попитай Пулс", exact=True).click()
             page.wait_for_function("!pulsPage(S.route.id).chat.busy && !!pulsPage(S.route.id).chat.error")
-            assert "not_configured" in page.locator('#main').inner_text()
+            assert "Пулс още не е включен" in page.locator('#main').inner_text()
+            assert "not_configured" not in page.locator('#main').inner_text()
+            assert "groq_key" not in page.locator('#main').inner_text()
             page.evaluate("""() => { S.settings.smartPairs=false; S.data.signals.push({id:'two-orders',strategy:'lib_golden_cross-H4',strategy_name:'Проверка на посоката',pair:'USDCAD',tf:'H4',style:'swing',status:'pending',orders:[{dir:1,entry:1.4,stop:1.39},{dir:-1,entry:1.39,stop:1.4}]}); render(); }""")
             assert page.locator('#puls-signal option[value="two-orders~1"]').count() == 1
             assert page.locator('#puls-signal option[value="two-orders~-1"]').count() == 1
@@ -278,8 +280,10 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             assert 'При суинг търговия' in page.locator('#main').inner_text()
             source_text = page.locator('.puls-overview .puls-sources').inner_text()
             for source in overview_response["sources"]:
-                assert source["name"] in source_text
+                label = "Пазарни котировки" if "twelvedata.com" in source["url"] else source["name"]
+                assert label in source_text
                 assert page.evaluate('(t) => pulsTime(t)', source["updated"]) in source_text, "Each source retains its own timestamp"
+            assert not page.locator('.puls-overview .puls-sources a[href*="twelvedata"]').count()
             assert page.evaluate('(t) => pulsTime(t)', overview_response["generated_at"]) in source_text
             page.locator('[data-puls-overview]').click()
             page.wait_for_function('!PULS.overview.loading && !PULS.overview.generating')
@@ -473,15 +477,17 @@ with tempfile.TemporaryDirectory(prefix="tp24-browser-") as folder:
             broken.route("**/assets/js/fx-core.js*", lambda route: route.abort())
             broken.goto(base + "/#/", wait_until="networkidle")
             broken.locator(".startup-error").wait_for()
-            assert "script_missing" in broken.locator(".startup-error").inner_text()
-            assert "fx-core.js" in broken.locator(".startup-error").inner_text()
+            assert broken.evaluate("TP24_BOOT.errors.some(error=>error.code==='script_missing' && error.file==='fx-core.js')")
+            assert "script_missing" not in broken.locator(".startup-error").inner_text()
+            assert "fx-core.js" not in broken.locator(".startup-error").inner_text()
             broken.close()
             bad_data = browser.new_page()
             bad_data.route("**/data/meta.json*", lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"prices_updated":int(time.time()),"quotes":{"EURUSD":{"price":1.1,"time":int(time.time())}}})))
             bad_data.route("**/data/recent.json*", lambda route: route.fulfill(status=200, content_type="application/json", body='{"prices":null}'))
             bad_data.goto(base + "/#/", wait_until="networkidle")
             bad_data.locator(".startup-error").wait_for()
-            assert "data_or_script_error" in bad_data.locator(".startup-error").inner_text()
+            assert bad_data.evaluate("TP24_BOOT.errors.some(error=>error.code==='data_or_script_error')")
+            assert "data_or_script_error" not in bad_data.locator(".startup-error").inner_text()
             bad_data.close()
             browser.close()
             print("OK: missing scripts and invalid recent data show a diagnostic instead of a permanent loading screen")

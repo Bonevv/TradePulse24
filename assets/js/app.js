@@ -132,8 +132,13 @@ function quoteFresh(pair) {
   // В дневната почивка на златото липсата на нова котировка е нормална.
   if (pair === "XAUUSD" && S.data.market.gold_break) return true;
   const quoteTime = Number(S.meta?.quotes?.[pair]?.time);
+  if (!(quoteTime > 0) || quoteTime > now() + 60) return false;
+  // От 5.2 cron тегли по график (нощем по-рядко). Котировката е стара, ако е от по-ранно теглене
+  // или ако планираното теглене е закъсняло с повече от 30 минути.
+  const next = Number(S.meta?.next_price_at), attempt = Number(S.meta?.price_attempt);
+  if (next > 0 && attempt > 0) return now() <= next + 30 * 60 && quoteTime >= attempt - 3600;
   const maxAge = Math.max(70 * 60, (S.data?.settings?.refresh_minutes || 20) * 3 * 60);
-  return quoteTime > 0 && now() - quoteTime <= maxAge && quoteTime <= now() + 60;
+  return now() - quoteTime <= maxAge;
 }
 function freshnessNotice(sig) {
   return !quoteFresh(sig.pair) ? `<div class="warn-line">⚠ Цените за ${esc(sig.pair)} са стари или липсват. Не използвай входното ниво, докато данните не се обновят.</div>` : "";
@@ -618,7 +623,7 @@ function drawEquity(e) {
 function viewLoading() {
   const msg = S.error || "Зареждам цените и смятам сигналите…";
   return `<div class="loading"><div><div class="spinner"></div><h2>Подготвям сайта</h2><p>${esc(msg)}</p>
-    <p class="muted" style="font-size:12px">Първото зареждане може да отнеме няколко секунди. Ако остане този екран, презареди с Ctrl+F5 и провери дали кодовите файлове са от една версия.</p></div></div>`;
+    <p class="muted" style="font-size:12px">Първото зареждане може да отнеме няколко секунди. Ако този екран остане, презареди страницата.</p></div></div>`;
 }
 
 function onboardingCard() {
@@ -1082,7 +1087,7 @@ function viewHelp() {
   return `
     <div class="page-heading"><div><p class="kicker">ПОМОЩ</p><h1>Как работи</h1><p>Откъде идват данните, как се смята сигналът и как да четеш резултатите.</p></div></div>
     <div class="how-steps">
-      <div class="how-step"><span class="num">01</span><strong>Цените</strong><p>На всеки ${d.settings?.refresh_minutes || 10} минути сайтът сваля цените на 7 валутни двойки и златото (XAU/USD).</p></div>
+      <div class="how-step"><span class="num">01</span><strong>Цените</strong><p>Делнично от 07:00 до 22:00 на всеки ${d.settings?.refresh_minutes || 15} минути (нощем по-рядко) сайтът сваля цените на 7 валутни двойки и златото (XAU/USD).</p></div>
       <div class="how-step"><span class="num">02</span><strong>Стратегиите</strong><p>Сравнява ${strategies().length} исторически тествани варианта. Сигнали се изчисляват за публикуваните и избраните от теб стратегии.</p></div>
       <div class="how-step"><span class="num">03</span><strong>Сигналът</strong><p>Когато правилата на стратегия са изпълнени, се появява сигнал с вход, стоп и конкретно правило за изход.</p></div>
       <div class="how-step"><span class="num">04</span><strong>Твоят обем</strong><p>Сайтът изчислява приблизителен лот според баланса, стопа и риска. Брокерският маржин и реалното изпълнение трябва да се проверят отделно.</p></div>
@@ -1114,7 +1119,7 @@ function viewHelp() {
         <section class="panel"><p class="kicker">ОГРАНИЧЕНИЯ</p><h3 style="margin-bottom:8px">Данни и изпълнение</h3>
           <ul class="rules">
             <li>Миналите резултати не гарантират бъдещите. Стратегия, която е печелила, може да започне да губи.</li>
-            <li>Цените са от ${esc(d.sources?.prices || "безплатен източник")}. Цената при твоя брокер може леко да се различава.</li>
+            <li>Проверявай часа на котировката. Цената при твоя брокер може да се различава от показаната тук.</li>
             <li>Новините са от ${esc(d.sources?.news || "ForexFactory")}.</li>
             <li>Началният разход е моделен. Комисиона, приплъзване и суап могат да се зададат в Лабораторията; резултатът пази използваните стойности.</li>
             <li>Това не е инвестиционен съвет. Ти решаваш дали и как да търгуваш.</li>
@@ -1127,7 +1132,7 @@ function viewHelp() {
             <li>● е свещта на сигнала, ▲▼ е достигнатият вход по модела, ■ е изходът. Линиите са вход, начален и текущ стоп и действителните цели (TP). +1R и +2R са само ориентири.</li>
             <li>Без текущ сигнал на графиката няма входни нива. При две противоположни чакащи поръчки се виждат и двете.</li>
             <li>Всичко на графиката е изчислен модел. Реалната ти сделка (от дневника или потвърдена в „Следени“) е в лилаво.</li>
-            <li>Графиката не тегли нови цени: показва запазените данни, които cron.php обновява. Часовете са по ${esc(TZ)}.</li>
+            <li>Графиката показва последните налични данни. Часът на котировката показва доколко са актуални. Часовете са по ${esc(TZ)}.</li>
             <li>Рисува се с TradingView Lightweight Charts™ (Apache License 2.0). Copyright (с) 2025 TradingView, Inc. · <a class="link" href="https://www.tradingview.com/" target="_blank" rel="noopener">tradingview.com</a></li>
           </ul></section>
       </div>
@@ -1285,7 +1290,19 @@ async function recoverTracked(result, tracked, timestamp, meta) {
   S.trackingMissing = missing.filter((signal) => !found.has(signal.id)).map((signal) => signal.id);
 }
 
-/** Зарежда данните; без работещ cron показва само историческия каталог. */
+/** Подробните сървърни грешки не са съобщения за посетители. */
+function publicDataMessages(meta) {
+  const errors = Array.isArray(meta?.errors) ? meta.errors.filter((error) => typeof error === "string") : [];
+  const calendarError = (error) => /календар|новини|ForexFactory/i.test(error);
+  const messages = [];
+  if (errors.some(calendarError)) messages.push("Календарът временно не може да се обнови. Провери часа на последното обновяване.");
+  // Отказ на един доставчик не засяга посетителя, ако котировките са актуални.
+  if (errors.some((error) => !calendarError(error)) && !FX.PAIR_KEYS.every(quoteFresh))
+    messages.push("Част от котировките временно не могат да се обновят. Показани са последните налични цени.");
+  return messages;
+}
+
+/** Зарежда данните; без текущи цени показва само историческия каталог. */
 let loadSequence = 0;
 async function load() {
   const seq = ++loadSequence;
@@ -1309,7 +1326,7 @@ async function load() {
   const hasQuotes = Object.values(meta?.quotes || {}).some((q) => q && Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
   if (!meta || !recent || !meta.prices_updated || !hasQuotes) {
     S.engine = null;
-    S.error = "Липсват текущи цени от cron.php. Показваме само историята на стратегиите, без активни сигнали.";
+    S.error = "Липсват текущи цени. Показваме само историята на стратегиите, без активни сигнали.";
     S.data = { ready: true,
       strategies: Object.values(entriesMap).filter(currentEntry).map(researchEntry),
       signals: [], pairs: Object.fromEntries(FX.PAIR_KEYS.map((key) => [key, { ...FX.PAIRS[key], price: null, change_pct: null }])),
@@ -1317,6 +1334,7 @@ async function load() {
       news: (news.events || []).map((e) => { const [bg, ex] = FX.translateNews(e.title); return { ...e, title_bg: bg, explain: ex }; }),
       news_updated: news.updated || null, prices_updated: null, errors: [], settings: { refresh_minutes: 20 }, sources: { news: "ForexFactory — седмичен календар" },
     };
+    S.data.errors = publicDataMessages(meta);
     if (typing()) renderChrome(); else render();
     S.timer = setTimeout(load, 30000);
     return;
@@ -1345,10 +1363,11 @@ async function load() {
     strategies: entries,
     signals: res.signals, pairs: res.pairs, market: res.market, common_rules: FX.COMMON_RULES,
     news: (news.events || []).map((e) => { const [bg, ex] = FX.translateNews(e.title); return Object.assign({}, e, { title_bg: bg, explain: ex }); }),
-    news_updated: meta.news_updated, prices_updated: meta.prices_updated, errors: meta.errors || [],
-    sources: { prices: `Twelve Data (обновяване на ${meta.refresh_minutes || 20} минути)`, news: meta.source_news || "ForexFactory" },
+    news_updated: meta.news_updated, prices_updated: meta.prices_updated, errors: [],
+    sources: { prices: "Пазарни котировки", news: meta.source_news || "ForexFactory" },
     settings: { refresh_minutes: meta.refresh_minutes || 20 }, results_saved: results ? results.saved : null, live_started: meta.launch,
   };
+  S.data.errors = publicDataMessages(meta);
   S.error = null;
   const readySignals = res.signals.filter((sig) => quoteFresh(sig.pair));
   const changes = S.watch.ingest(readySignals);
@@ -1359,7 +1378,7 @@ async function load() {
   S.timer = setTimeout(load, 5 * 60000);
   } catch (error) {
     if (seq !== loadSequence) return;
-    S.error = "Не успяхме да подготвим ценовия модел. Провери дали recent.json е създаден от текущия cron и дали всички JavaScript файлове са обновени.";
+    S.error = "Не успяхме да заредим данните. Презареди страницата или опитай отново по-късно.";
     if (window.TP24_BOOT) window.TP24_BOOT.fail("data_or_script_error", "app.js", 0, error.name);
     else { const main = document.getElementById("main"); if (main) main.innerHTML = `<section class="panel" role="alert"><h1>Зареждането прекъсна</h1><p>${esc(S.error)}</p></section>`; }
   }

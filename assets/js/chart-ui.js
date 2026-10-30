@@ -297,7 +297,7 @@ function chartNotices(st) {
 
 function chartCanvas(st) {
   if (!st.entry) return emptyBox("▦", "Няма тестван вариант", `За ${esc(FX.PAIRS[st.pair].name)} няма вариант в ${STYLE_NAMES[S.settings.style].toLowerCase()} стил. Смени стила или инструмента.`);
-  if (!st.series) return emptyBox("▦", "Няма графика", "Графиката се появява, когато cron.php запише последните свещи. Нови цени не се теглят при отваряне на страницата.");
+  if (!st.series) return emptyBox("▦", "Няма графика", "Все още няма достатъчно ценови данни за този изглед. Опитай отново по-късно.");
   const s = st.series, q = S.meta?.quotes?.[st.pair], last = s.t[s.n - 1] + s.sec;
   const toggles = st.plots.length ? `<div class="mc-inds" role="group" aria-label="Индикатори на стратегията">${st.plots.map((p) => {
     const on = chartShown(st, p);
@@ -310,7 +310,7 @@ function chartCanvas(st) {
     <p class="mc-model-note">Опростена графика: последните свещи с нивата на модела, без индикатори. <a class="text-link" href="#/settings">Смени вида в Настройки ↗</a></p>
     <details class="mc-help"><summary>Обозначения и източник</summary>
     <div class="chart-legend">${legend}<span>┆ сигнал · ▲▼ вход · ■ изход</span></div>
-    <p class="mc-source">Свещи: ${esc(S.data.sources?.prices || "Twelve Data")} · последна завършена свещ до ${esc(when(last))}${q?.time ? ` · котировка ${px(st.pair, q.price)} в ${esc(when(q.time))}${quoteFresh(st.pair) ? "" : " (стара)"}` : " · няма котировка"}. Часовете са по ${esc(TZ)}.</p>
+    <p class="mc-source">Свещи: пазарни котировки · последна завършена свещ до ${esc(when(last))}${q?.time ? ` · котировка ${px(st.pair, q.price)} в ${esc(when(q.time))}${quoteFresh(st.pair) ? "" : " (стара)"}` : " · няма котировка"}. Часовете са по ${esc(TZ)}.</p>
     <p class="mc-source"><strong>Нивата и маркерите са изчислен модел, не изпълнена сделка при брокер.</strong> Реалният ти вход е в лилаво.</p></details>`;
   return `<div class="mc-legend" id="mc-legend"></div>
     <div class="mc-chart" id="mc-chart" role="img" aria-label="Свещи ${esc(FX.PAIRS[st.pair].name)} ${esc(FX.TIMEFRAMES[st.tf].label)} с индикаторите и нивата на модела"></div>
@@ -319,7 +319,7 @@ function chartCanvas(st) {
     <details class="mc-help"><summary>Обозначения, управление и източник</summary>
     <p class="mc-hint">Плъзни за разглеждане. Мащабът се сменя от скалите или с два пръста. „По-стара история“ зарежда наличните файлове на сайта.</p>
     <div class="chart-legend">${legend}<span>● сигнал · ▲▼ вход · ■ изход</span></div>
-    <p class="mc-source">Свещи: ${esc(S.data.sources?.prices || "Twelve Data")} · последна завършена свещ до ${esc(when(last))}${q?.time ? ` · котировка ${px(st.pair, q.price)} в ${esc(when(q.time))}${quoteFresh(st.pair) ? "" : " (стара)"}` : " · няма котировка"}. Часовете са по ${esc(TZ)}. Графиката показва запазените данни, по които се смятат сигналите, и не тегли нови цени.</p>
+    <p class="mc-source">Свещи: пазарни котировки · последна завършена свещ до ${esc(when(last))}${q?.time ? ` · котировка ${px(st.pair, q.price)} в ${esc(when(q.time))}${quoteFresh(st.pair) ? "" : " (стара)"}` : " · няма котировка"}. Часовете са по ${esc(TZ)}. Графиката показва запазените данни, по които се смятат сигналите, и не тегли нови цени.</p>
     <p class="mc-source"><strong>Нивата и маркерите са изчислен модел, не изпълнена сделка при брокер.</strong> Реалният ти вход (от дневника или потвърден в „Следени“) е в лилаво.</p>
     </details><p class="mc-attrib">Графика: <a href="https://www.tradingview.com/" target="_blank" rel="noopener">${esc(MC_NOTICE)}</a> · Apache License 2.0</p>`;
 }
@@ -576,7 +576,7 @@ function chartMarker(m) {
 /** Без библиотеката (липсващ файл) се показва опростената графика със същите нива. */
 function chartFallback(host, st) {
   drawSimpleChart(host, st);
-  host.insertAdjacentHTML("beforeend", '<p class="what">Интерактивната графика не се зареди (липсва assets/vendor/lightweight-charts). Показана е опростената.</p>');
+  host.insertAdjacentHTML("beforeend", '<p class="what">Интерактивната графика временно не е достъпна. Показана е опростената.</p>');
 }
 
 /* ------------------------------------------------------------ опростена графика */

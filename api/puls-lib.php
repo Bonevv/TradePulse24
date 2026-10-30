@@ -95,6 +95,7 @@ function puls_context(string $kind, array $news, array $meta, array $input, int 
         $time = (int) ($quote['time'] ?? 0);
         $context['quotes'][$pair] = ['price' => (float) $quote['price'], 'time' => $time, 'fresh' => $time > 0 && $time <= $now + 60 && $now - $time <= 1800];
     }
+    if ($context['quotes']) $context['price_source'] = 'Пазарни котировки';
     return $context;
 }
 
@@ -222,7 +223,9 @@ function puls_generate(string $kind, array $context, string $question, array $hi
     foreach ($context['quotes'] as $quote) if (!$quote['fresh']) { $result['unknowns'][] = 'Има остарели котировки; текущите входни нива не са потвърдени.'; break; }
     if (!$context['quotes']) $result['unknowns'][] = 'Няма предоставени актуални котировки за оценка на текущия вход.';
     $sources = [['name' => 'ForexFactory — седмичен календар', 'url' => 'https://nfs.faireconomy.media/ff_calendar_thisweek.json', 'updated' => $context['calendar_updated']]];
-    if ($context['quotes']) $sources[] = ['name' => 'Twelve Data — налични котировки', 'url' => 'https://twelvedata.com/', 'updated' => max(array_column($context['quotes'], 'time'))];
+    if ($context['quotes']) {
+        $sources[] = ['name' => 'Пазарни котировки', 'url' => null, 'updated' => max(array_column($context['quotes'], 'time'))];
+    }
     return ['ok' => true, 'kind' => $kind, 'day' => $context['day'], 'generated_at' => $now, 'data_updated' => $context['calendar_updated'], 'model' => $model, 'content' => $result, 'sources' => $sources];
 }
 

@@ -9,11 +9,9 @@
     if (main.children.length && !main.querySelector(".loading") && !main.querySelector(".startup-error")) return;
     const box = document.createElement("section"); box.className = "panel startup-error"; box.setAttribute("role", "alert");
     const title = document.createElement("h1"); title.textContent = "Зареждането прекъсна";
-    const text = document.createElement("p"); text.textContent = "Възможно е част от файловете да са останали от стара версия или да не са заредени. Презареди с Ctrl+F5. При обновяване копирай всички кодови файлове от един и същ пакет.";
-    const details = document.createElement("p"); details.className = "what";
-    details.textContent = `Код: ${problem.code}${problem.file ? " · " + problem.file : ""}${problem.line ? ":" + problem.line : ""}${problem.kind ? " · " + problem.kind : ""}`;
+    const text = document.createElement("p"); text.textContent = "Част от страницата не можа да се зареди. Презареди я или опитай отново по-късно.";
     const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn btn-primary"; retry.textContent = "Презареди страницата"; retry.addEventListener("click", () => location.reload());
-    box.append(title, text, details, retry); main.replaceChildren(box);
+    box.append(title, text, retry); main.replaceChildren(box);
   }
   state.fail = (code, file = "", line = 0, kind = "") => {
     const problem = { code, file: String(file).split("?")[0].split("/").pop().replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 80), line: Number(line) || 0,

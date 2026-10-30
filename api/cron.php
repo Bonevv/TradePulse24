@@ -6,8 +6,10 @@
  *     https://твоят-сайт.bg/api/cron.php?token=ТАЙНИЯТ_КЛЮЧ
  *
  * Какво прави:
- * 1. Сваля последните 15-минутни свещи за 8-те инструмента (Twelve Data) и от тях сглобява часовите.
- * 2. На 3 часа сваля и дневните свещи.
+ * 1. По график (делнично 07–22 ч. на 15 мин, нощем на 3 часа, през уикенда не) сваля 15-минутните свещи
+ *    за 8-те инструмента от Tiingo, а при отказ — от Twelve Data, и от тях сглобява часовите.
+ *    Хостингът може да пуска файла и по-често: когато още не е време, той не тегли цени. &force=1 тегли веднага.
+ * 2. Дневните свещи — от Twelve Data на 3 часа, а без него се сглобяват от часовите.
  * 3. Веднъж на час сваля икономическия календар (ForexFactory).
  * 4. Подготвя data/recent.json - последните свещи, от които браузърът смята сигналите.
  */
@@ -63,51 +65,107 @@ $meta['launch'] = $meta['launch'] ?? $now;
 $meta['quotes'] = $meta['quotes'] ?? [];
 $meta['d1_updated'] = $meta['d1_updated'] ?? [];
 $errors = [];
-$gap = 8; // безплатният план на Twelve Data: 8 заявки в минута
-$key = (string) cfg()['twelvedata_key'];
+$config = cfg();
+$sources = array_values(array_filter(['tiingo', 'twelve'], 'source_ready')); // Tiingo е основен, Twelve Data — резервен
+$meta['blocked'] = is_array($meta['blocked'] ?? null) ? $meta['blocked'] : [];
+unset($meta['blocked_until']); // общата блокировка от версии до 5.1 вече не се ползва
+// Блокировката важи за ключа, с който е получена: нов ключ започва на чисто.
+$blocked = function (string $source) use (&$meta, $now): bool {
+    $b = $meta['blocked'][$source] ?? null;
+    return is_array($b) && (int) ($b['until'] ?? 0) > $now && ($b['key'] ?? '') === key_print(source_key($source));
+};
+$block = function (string $source, string $message) use (&$meta, $now): int {
+    $until = limit_until($source, $message, $now);
+    $meta['blocked'][$source] = ['until' => $until, 'key' => key_print(source_key($source)), 'reason' => mb_substr($message, 0, 200)];
+    return $until;
+};
+$force = PHP_SAPI === 'cli' ? in_array('--force', $argv ?? [], true) : isset($_GET['force']);
+[$due, $interval] = price_due($now, (int) ($meta['price_attempt'] ?? 0), $config);
 
 /* ---------------------------------------------------------------- цени */
-if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
-    $errors[] = 'Липсва ключ за Twelve Data в api/config.php. Цените не се обновяват.';
-} elseif (($meta['blocked_until'] ?? 0) > $now) {
-    $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след ' . ceil(($meta['blocked_until'] - $now) / 60) . ' мин.';
+if (!$sources) {
+    $errors[] = 'Липсва ключ за цените: tiingo_key (основен) или twelvedata_key в api/config.local.php. Цените не се обновяват.';
+} elseif (!$due && !$force) {
+    say('Цените не са за обновяване сега: следващите са около ' . sofia_time(next_price_at((int) $meta['price_attempt'], $config), $now) . ' (за ръчно теглене добави &force=1).');
 } else {
+    $meta['price_attempt'] = $now;
+    $meta['price_errors'] = [];
     $okCount = 0;
+    $used = [];
+    $refused = []; // източник, който отхвърли ключа, не се пита повече в това пускане
     foreach (PAIRS as $pair => [$symbol]) {
-        try {
-            // След прекъсване теглим целия пропуск с припокриване, а не само последните 30 часа.
-            $old = last_bars($pair, 'M15', 1);
-            sleep($gap);
-            [$bars, $price, $priceTime] = twelve($pair, '15min', fetch_size($old ? (int) $old[0][0] : null, $now, 900, 120));
-            merge_bars($pair, 'M15', $bars);
-            if ($price && $priceTime) $meta['quotes'][$pair] = ['price' => $price, 'time' => $priceTime, 'fetched_at' => $now];
-            // Часовите свещи се сглобяват от 15-минутните: само завършени часове с всичките им свещи.
-            merge_bars($pair, 'H1', hours_from_m15($bars, $now));
-            if ($now - (int) ($meta['d1_updated'][$pair] ?? 0) >= 3 * 3600) {
-                $oldDay = last_bars($pair, 'D1', 1);
-                sleep($gap);
-                [$days] = twelve($pair, '1day', fetch_size($oldDay ? (int) $oldDay[0][0] : null, $now, 86400, 15));
-                merge_bars($pair, 'D1', $days);
-                $meta['d1_updated'][$pair] = $now;
+        $old = last_bars($pair, 'M15', 1);
+        $done = false;
+        foreach ($sources as $source) {
+            if ($blocked($source) || isset($refused[$source])) continue;
+            try {
+                if ($source === 'tiingo') {
+                    [$bars, $price, $priceTime] = tiingo($pair, $old ? (int) $old[0][0] : $now - 30 * 86400);
+                    usleep(300000);
+                } else {
+                    sleep(TWELVE_GAP);
+                    [$bars, $price, $priceTime] = twelve($pair, '15min', fetch_size($old ? (int) $old[0][0] : null, $now, 900, 120));
+                }
+                merge_bars($pair, 'M15', $bars);
+                if ($price && $priceTime) $meta['quotes'][$pair] = ['price' => $price, 'time' => $priceTime, 'fetched_at' => $now, 'source' => $source];
+                // Часовите свещи се сглобяват от 15-минутните: само завършени часове с всичките им свещи.
+                merge_bars($pair, 'H1', hours_from_m15($bars, $now));
+                $used[$source] = true;
+                $done = true;
+                $okCount++;
+                say("$symbol: " . count($bars) . ' свещи от ' . SOURCE_NAMES[$source]);
+                break;
+            } catch (RateLimited $e) {
+                $until = $block($source, $e->getMessage());
+                say("$symbol: " . SOURCE_NAMES[$source] . ' отказа (лимит) до ' . sofia_time($until, $now) . ' ч.');
+            } catch (Throwable $e) {
+                $message = $e->getMessage();
+                $who = $symbol;
+                if (preg_match('/^HTTP 40[13]\b/', $message)) {
+                    // Отхвърлен ключ важи за всички инструменти.
+                    $refused[$source] = true;
+                    $who = '*';
+                    $detail = preg_match('/"(?:detail|message)"\s*:\s*"([^"]+)/', $message, $match) ? $match[1] : $message;
+                    $detail = trim(str_replace('*', '', preg_split('/\.\s/', $detail)[0]), ' .');
+                    $message = 'не приема ключа (' . $detail . '). Провери ' . ($source === 'tiingo' ? 'tiingo_key' : 'twelvedata_key') . ' в api/config.local.php.';
+                }
+                $meta['price_errors'][] = [$source, $who, $message];
+                say("$symbol: ГРЕШКА от " . SOURCE_NAMES[$source] . ': ' . $message);
             }
-            $okCount++;
-            say("$symbol: " . count($bars) . ' нови 15-минутни свещи');
+        }
+        if (!$done && !array_filter($sources, fn($s) => !$blocked($s))) { say('Всички източници са ограничени, спирам.'); break; }
+        // Дневните свещи: от Twelve Data на 3 часа, ако е наличен; иначе се сглобяват от часовите по UTC ден.
+        if (!$done) continue;
+        try {
+            if (source_ready('twelve') && !$blocked('twelve')) {
+                if ($now - (int) ($meta['d1_updated'][$pair] ?? 0) >= 3 * 3600) {
+                    $oldDay = last_bars($pair, 'D1', 1);
+                    sleep(TWELVE_GAP);
+                    [$days] = twelve($pair, '1day', fetch_size($oldDay ? (int) $oldDay[0][0] : null, $now, 86400, 15));
+                    merge_bars($pair, 'D1', $days);
+                    $meta['d1_updated'][$pair] = $now;
+                }
+            } else {
+                $oldDay = last_bars($pair, 'D1', 1);
+                $days = days_from_h1(last_bars($pair, 'H1', 400), $now, $oldDay ? (int) $oldDay[0][0] : 0);
+                if ($days) merge_bars($pair, 'D1', $days);
+            }
         } catch (RateLimited $e) {
-            $meta['blocked_until'] = $now + 900;
-            $errors[] = 'Източникът на цени временно ограничи заявките. Нов опит след 15 мин.';
-            say("$symbol: лимит на заявките, спирам");
-            break;
+            $block('twelve', $e->getMessage());
         } catch (Throwable $e) {
-            $errors[] = "$symbol: " . $e->getMessage();
-            say("$symbol: ГРЕШКА " . $e->getMessage());
+            $meta['price_errors'][] = ['twelve', "$symbol (дневни)", $e->getMessage()];
         }
     }
-    if ($okCount) $meta['prices_updated'] = $now;
+    if ($okCount) {
+        $meta['prices_updated'] = $now;
+        $meta['source_prices'] = implode(' + ', array_map(fn($s) => SOURCE_NAMES[$s] . ($s === 'twelve' && count($used) > 1 ? ' (резервен)' : ''), array_keys($used)));
+    }
 
     /* ------------------------------------------------------------ стари дупки */
     // Най-много една допълнителна заявка на час, за да се пази квотата. Всяка дупка се проверява веднъж:
     // ако източникът няма свещи за нея (празник, прекъсване при доставчика), тя остава отбелязана.
-    if ($okCount === count(PAIRS) && $now - (int) ($meta['gap_repair_at'] ?? 0) >= 3600) {
+    $repair = current(array_filter($sources, fn($s) => !$blocked($s)));
+    if ($repair && $okCount === count(PAIRS) && $now - (int) ($meta['gap_repair_at'] ?? 0) >= 3600) {
         $checked = is_array($meta['gaps_checked'] ?? null) ? $meta['gaps_checked'] : [];
         $todo = null;
         foreach (PAIRS as $pair => [$symbol]) {
@@ -121,8 +179,8 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
         if ($todo) {
             $meta['gap_repair_at'] = $now;
             try {
-                sleep($gap);
-                [$bars] = twelve($todo['pair'], '15min', min(5000, intdiv($todo['to'] - $todo['from'], 900) + 8), gmdate('Y-m-d H:i:s', $todo['to']));
+                if ($repair === 'tiingo') [$bars] = tiingo($todo['pair'], $todo['from'], $todo['to']);
+                else { sleep(TWELVE_GAP); [$bars] = twelve($todo['pair'], '15min', min(5000, intdiv($todo['to'] - $todo['from'], 900) + 8), gmdate('Y-m-d H:i:s', $todo['to'])); }
                 $bars = array_values(array_filter($bars, fn($b) => $b[0] <= $todo['to']));
                 $missing = count(array_filter($bars, fn($b) => $b[0] > $todo['from'] && $b[0] < $todo['to']));
                 if ($missing) {
@@ -132,7 +190,7 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
                 say($todo['symbol'] . ': дупка от ' . gmdate('Y-m-d H:i', $todo['from']) . ' UTC — ' . ($missing ? "допълнени $missing свещи" : 'източникът няма свещи за този период'));
                 $checked[] = $todo['id'];
             } catch (RateLimited $e) {
-                $meta['blocked_until'] = $now + 900;
+                $block($repair, $e->getMessage());
                 say($todo['symbol'] . ': лимит на заявките при допълване на дупка');
             } catch (Throwable $e) {
                 $checked[] = $todo['id'];
@@ -142,6 +200,23 @@ if ($key === '' || $key === 'ПОСТАВИ_КЛЮЧА_ТУК') {
         }
     }
 }
+
+// Съобщенията за цените важат до следващото теглене: грешките от последния опит (еднаквите — заедно) и текущите ограничения.
+$grouped = [];
+foreach ($meta['price_errors'] ?? [] as $row) {
+    if (!is_array($row) || count($row) !== 3) continue;
+    [$source, $symbol, $message] = $row;
+    $grouped[SOURCE_NAMES[$source] . ': ' . $message][] = $symbol;
+}
+foreach (array_slice($grouped, 0, 3, true) as $message => $symbols) $errors[] = $message . (in_array('*', $symbols, true) ? '' : (count($symbols) >= count(PAIRS) ? ' (всички инструменти)' : ' (' . implode(', ', $symbols) . ')'));
+$limited = array_values(array_filter($sources, $blocked));
+if ($limited) {
+    $list = implode(', ', array_map(fn($s) => SOURCE_NAMES[$s] . ' до ' . sofia_time((int) $meta['blocked'][$s]['until'], $now) . ' ч.', $limited));
+    $free = array_values(array_diff($sources, $limited));
+    $errors[] = $free ? "Временно ограничен: $list Цените идват от " . SOURCE_NAMES[$free[0]] . '.' : "Източниците на цени са временно ограничени: $list Тогава ще дойдат нови цени.";
+}
+$meta['price_interval'] = $interval;
+$meta['next_price_at'] = next_price_at((int) ($meta['price_attempt'] ?? $now), $config);
 
 /* ---------------------------------------------------------------- новини */
 if ($now - (int) ($meta['news_updated'] ?? 0) >= 3600) {
@@ -187,8 +262,8 @@ write_json(DATA_DIR . '/recent.json', $recent);
 
 $meta['errors'] = $errors;
 $meta['updated'] = $now;
-$meta['refresh_minutes'] = (int) (cfg()['refresh_minutes'] ?? 20);
-$meta['source_prices'] = 'Twelve Data';
+$meta['refresh_minutes'] = max(10, min(60, (int) (cfg()['refresh_minutes'] ?? 15)));
+$meta['source_prices'] = $meta['source_prices'] ?? 'Twelve Data';
 $meta['source_news'] = 'ForexFactory – икономически календар за седмицата';
 write_json(DATA_DIR . '/meta.json', $meta);
 // Общият обзор се подготвя най-много три пъти дневно при променени данни.

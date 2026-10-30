@@ -78,7 +78,7 @@ function cfg(): array
         }
         $c = require __DIR__ . '/config.php';
         if (is_file(__DIR__ . '/config.local.php')) $c = array_merge($c, require __DIR__ . '/config.local.php');
-        foreach (['TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GROQ_API_KEY' => 'groq_key', 'GROQ_MODEL' => 'groq_model'] as $variable => $key) {
+        foreach (['TIINGO_API_KEY' => 'tiingo_key', 'TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GROQ_API_KEY' => 'groq_key', 'GROQ_MODEL' => 'groq_model'] as $variable => $key) {
             $value = getenv($variable);
             if ($value !== false && $value !== '') $c[$key] = $value;
         }
@@ -122,8 +122,10 @@ function http_get(string $url, array $headers = [], int $timeout = 90): string
     $err = curl_error($ch);
     curl_close($ch);
     if ($body === false) throw new RuntimeException("Мрежова грешка: $err");
-    if ($code === 429) throw new RateLimited('Твърде много заявки (429)');
-    if ($code >= 400) throw new RuntimeException("HTTP $code");
+    // Краткият текст на отговора казва дали лимитът е минутен, часов или дневен. Ключът не е в отговора.
+    $detail = trim(mb_substr(preg_replace('/\s+/', ' ', strip_tags((string) $body)), 0, 200));
+    if ($code === 429) throw new RateLimited('Твърде много заявки (429)' . ($detail !== '' ? ": $detail" : ''));
+    if ($code >= 400) throw new RuntimeException("HTTP $code" . ($detail !== '' ? ": $detail" : ''));
     return (string) $body;
 }
 
@@ -133,10 +135,13 @@ function twelve(string $pair, string $interval, int $size, ?string $endDate = nu
     $params = ['symbol' => PAIRS[$pair][0], 'interval' => $interval, 'outputsize' => $size, 'timezone' => 'UTC'];
     if ($endDate) $params['end_date'] = $endDate;
     $url = 'https://api.twelvedata.com/time_series?' . http_build_query($params);
-    $data = json_decode(http_get($url, ['Authorization: apikey ' . cfg()['twelvedata_key']]), true);
+    $data = json_decode(http_get($url, ['Authorization: apikey ' . source_key('twelve')]), true);
     if (!is_array($data)) throw new RuntimeException('Непонятен отговор от Twelve Data');
     if (($data['status'] ?? '') === 'error') {
-        if ((int) ($data['code'] ?? 0) === 429) throw new RateLimited((string) ($data['message'] ?? 'лимит'));
+        $code = (int) ($data['code'] ?? 0);
+        if ($code === 429) throw new RateLimited((string) ($data['message'] ?? 'лимит'));
+        // Грешен ключ се съобщава като HTTP 401/403, за да не се пита за всеки инструмент поотделно.
+        if (in_array($code, [401, 403], true)) throw new RuntimeException("HTTP $code: \"detail\": \"" . str_replace('"', "'", (string) ($data['message'] ?? 'грешен ключ')) . '"');
         throw new RuntimeException('Twelve Data: ' . ($data['message'] ?? 'грешка'));
     }
     $step = ['15min' => 900, '1h' => 3600][$interval] ?? 86400;
@@ -152,6 +157,115 @@ function twelve(string $pair, string $interval, int $size, ?string $endDate = nu
     }
     usort($bars, fn($a, $b) => $a[0] <=> $b[0]);
     return [$bars, $last ? $last[1] : null, $last ? $last[0] : null];
+}
+
+/* ---------------------------------------------------------------- източници на цени */
+
+const SOURCE_NAMES = ['tiingo' => 'Tiingo', 'twelve' => 'Twelve Data'];
+const TWELVE_GAP = 10;          // секунди между заявките към Twelve Data: 6 в минута при лимит 8, с резерв
+// Как Tiingo отбелязва 15-минутната свещ: 'start' — с началото ѝ (10:00 е свещта 10:00–10:15), 'end' — с края ѝ.
+const TIINGO_BAR_STAMP = 'start';
+
+function source_key(string $source): string
+{
+    $key = trim((string) (cfg()[$source === 'tiingo' ? 'tiingo_key' : 'twelvedata_key'] ?? ''));
+    return $key === 'ПОСТАВИ_КЛЮЧА_ТУК' ? '' : $key;
+}
+function source_ready(string $source): bool { return source_key($source) !== ''; }
+/** Отпечатък на ключа: блокировката важи за ключа, с който е получена, и изчезва при смяна на ключа. */
+function key_print(string $key): string { return $key === '' ? '' : substr(sha1($key), 0, 12); }
+
+/** До кога да не се пита източникът след отказ. Дневният лимит е до полунощ UTC, часовият — до следващия час,
+    минутният на Twelve Data — около минута. Непознат отказ — 15 минути. */
+function limit_until(string $source, string $message, int $now): int
+{
+    $m = strtolower($message);
+    if (strpos($m, 'for the day') !== false || strpos($m, 'daily') !== false) return intdiv($now, 86400) * 86400 + 86400 + 60;
+    if (strpos($m, 'hour') !== false) return intdiv($now, 3600) * 3600 + 3600 + 30;
+    if (strpos($m, 'minute') !== false) return $now + 70;
+    return $source === 'tiingo' ? intdiv($now, 3600) * 3600 + 3600 + 30 : $now + 900;
+}
+
+/**
+ * Графикът за цените. Делнично от 07:00 до 22:00 софийско време — на refresh_minutes (по подразбиране 15),
+ * нощем — на night_refresh_minutes (180). При затворен пазар — още веднъж след затварянето, после нищо до отварянето.
+ * Връща [време ли е, интервал в минути].
+ */
+function price_due(int $now, int $last, array $config): array
+{
+    $day = max(10, min(60, (int) ($config['refresh_minutes'] ?? 15)));
+    $night = max($day, min(360, (int) ($config['night_refresh_minutes'] ?? 180)));
+    if (!market_open_at($now)) return [$last === 0 || market_open_at($last), $night];
+    $hour = (int) (new DateTimeImmutable('@' . $now))->setTimezone(new DateTimeZone('Europe/Sofia'))->format('G');
+    $interval = $hour >= 7 && $hour < 22 ? $day : $night;
+    return [$now - $last >= $interval * 60 - 90, $interval];
+}
+
+/** Кога най-рано ще дойдат нови цени при този график (стъпки по 5 минути, до 4 дни напред). */
+function next_price_at(int $last, array $config): int
+{
+    for ($t = $last + 300; $t <= $last + 4 * 86400; $t += 300) if (price_due($t, $last, $config)[0]) return $t;
+    return $last + 4 * 86400;
+}
+
+/** Tiingo: 15-минутните свещи от датата на from (включително) до to. Връща [завършени свещи, последна цена, време]. */
+function tiingo(string $pair, int $from, ?int $to = null): array
+{
+    $ticker = strtolower(str_replace('/', '', PAIRS[$pair][0]));
+    $params = ['startDate' => gmdate('Y-m-d', $from), 'resampleFreq' => '15min'];
+    if ($to !== null) $params['endDate'] = gmdate('Y-m-d', $to + 86400);
+    $url = "https://api.tiingo.com/tiingo/fx/$ticker/prices?" . http_build_query($params);
+    return tiingo_parse(http_get($url, ['Authorization: Token ' . source_key('tiingo'), 'Content-Type: application/json']), time());
+}
+
+/** Отговорът на Tiingo като свещи [t, o, h, l, c] по началото на свещта. Незавършената последна свещ дава само цената. */
+function tiingo_parse(string $body, int $now): array
+{
+    $data = json_decode($body, true);
+    if (!is_array($data)) throw new RuntimeException('Непонятен отговор от Tiingo');
+    if (isset($data['detail'])) {
+        $message = (string) $data['detail'];
+        if (preg_match('/allocation|limit|too many/i', $message)) throw new RateLimited($message);
+        throw new RuntimeException('Tiingo: ' . $message);
+    }
+    $bars = [];
+    $last = null;
+    foreach ($data as $row) {
+        if (!is_array($row) || !isset($row['date'], $row['open'], $row['high'], $row['low'], $row['close'])) continue;
+        $t = strtotime((string) $row['date']);
+        if ($t === false) continue;
+        if (TIINGO_BAR_STAMP === 'end') $t -= 900;
+        $o = (float) $row['open']; $h = (float) $row['high']; $l = (float) $row['low']; $c = (float) $row['close'];
+        if ($last === null || $t >= $last[0]) $last = [$t, $c];
+        if ($t + 900 > $now) continue; // текущата, незавършена свещ
+        $bars[] = [$t, $o, max($h, $o, $c), min($l, $o, $c), $c];
+    }
+    usort($bars, fn($a, $b) => $a[0] <=> $b[0]);
+    return [$bars, $last ? $last[1] : null, $last ? $last[0] : null];
+}
+
+/** Дневни свещи по UTC ден от часовите — когато няма Twelve Data. Само завършени дни след последната записана дневна. */
+function days_from_h1(array $hours, int $now, int $after): array
+{
+    $days = [];
+    foreach ($hours as [$t, $o, $h, $l, $c]) {
+        $d = intdiv((int) $t, 86400) * 86400;
+        if ($d <= $after || $d + 86400 > $now) continue;
+        if (!isset($days[$d])) $days[$d] = [$d, $o, $h, $l, $c];
+        else { $days[$d][2] = max($days[$d][2], $h); $days[$d][3] = min($days[$d][3], $l); $days[$d][4] = $c; }
+    }
+    ksort($days);
+    return array_values($days);
+}
+
+/** Час по софийско време за съобщенията: „15:00“ днес, иначе „пт 15:00“. */
+function sofia_time(int $t, int $now): string
+{
+    $zone = new DateTimeZone('Europe/Sofia');
+    $at = (new DateTimeImmutable('@' . $t))->setTimezone($zone);
+    $today = (new DateTimeImmutable('@' . $now))->setTimezone($zone)->format('Y-m-d');
+    $days = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'нд'];
+    return ($at->format('Y-m-d') === $today ? '' : $days[(int) $at->format('N')] . ' ') . $at->format('H:i');
 }
 
 function prices_file(string $pair, string $tf): string

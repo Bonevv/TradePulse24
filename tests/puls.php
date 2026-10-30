@@ -19,6 +19,7 @@ $signal = ['pair' => 'USDCAD', 'tf' => 'H4', 'dir' => 1, 'status' => 'pending', 
 $input = ['event_id' => 'boc-check', 'signal' => $signal, 'question' => 'Какво да следя?', 'history' => []];
 $config = ['groq_key' => 'test-only-not-a-real-key', 'groq_model' => '', 'puls_requests_per_hour' => 20, 'puls_requests_per_day' => 60];
 $context = puls_context('chat', $news, $meta, $input, $now);
+expect(puls_context('chat', $news, array_merge($meta, ['source_prices' => 'Tiingo + Twelve Data (резервен)']), $input, $now)['price_source'] === 'Пазарни котировки', 'Price provider details stay out of the model context');
 expect($context['event']['actual'] === null && $context['event']['phase'] === 'scheduled', 'Future actual is discarded');
 expect(!isset($context['signal']['balance'], $context['signal']['password'], $context['signal']['note'], $context['balance']), 'Only explicit model fields leave the server');
 $zero = $event; $zero['actual'] = '0'; $zero['time'] = $now - 1;
@@ -44,6 +45,7 @@ $transport = function (string $path, ?array $payload) use (&$models, &$calls, &$
 try {
     $path = $temp();
     $first = puls_run('chat', $input, $config, $news, $meta, $path, $now, 'visitor-a', $transport);
+    expect($first['sources'][1]['name'] === 'Пазарни котировки' && $first['sources'][1]['url'] === null, 'Public quote references omit the provider and retain the quote time');
     expect(!$first['cached'] && $calls === 1 && $models === 1, 'First request resolves a model and really generates');
     $sent = json_decode(substr($payloads[0]['messages'][1]['content'], strlen('КОНТЕКСТ (данни): ')), true);
     expect($sent['now_local'] === '2026-10-28T08:03:00+02:00' && $sent['event']['time_local'] === '2026-10-28T09:03:00+02:00', 'The model receives exact readable Sofia times');

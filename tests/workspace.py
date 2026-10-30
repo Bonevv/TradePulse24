@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        fixture = {"/api/state.php": {"release": "5.1", "costs": {"pairs": {}}}, "/data/meta.json": meta,
+        fixture = {"/api/state.php": {"release": "5.2.1", "costs": {"pairs": {}}}, "/data/meta.json": meta,
                    "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": [], "updated": meta["prices_updated"]}}.get(path)
         if fixture is not None:
             body = json.dumps(fixture).encode()
@@ -201,6 +201,54 @@ try:
         print("OK: phone shows the simple chart by default and the interactive one when chosen in settings")
         touch.close()
         print("OK: touch controls move and reset panels in a mobile browser")
+
+        original_meta = json.loads(json.dumps(meta))
+        visitor = browser.new_page(viewport={"width": 1440, "height": 1000})
+        visitor.route("**/*", network)
+        # Работен ден, за да се проверят и предупрежденията за стари цени.
+        visitor.add_init_script("Date.now = () => Date.UTC(2026, 9, 30, 10)")
+        stamp = 1793354400
+        internal = "Временно ограничен: Twelve Data до 15:39 ч. Цените идват от Tiingo."
+        try:
+            for state in ["fresh", "stale", "missing"]:
+                meta.clear()
+                meta.update(json.loads(json.dumps(original_meta)))
+                meta.update({"source_prices": "Tiingo + Twelve Data", "errors": [internal, "HTTP 403: провери tiingo_key в api/config.local.php"]})
+                if state == "fresh":
+                    meta.update({"prices_updated": stamp, "price_attempt": stamp, "next_price_at": stamp + 900})
+                    for quote in meta["quotes"].values():
+                        quote["time"] = stamp
+                else:
+                    meta["errors"].append("Календарът с новини не можа да се обнови: HTTP 500 /server/private/path")
+                    if state == "missing":
+                        meta.update({"quotes": {}, "prices_updated": 0})
+                visitor.goto(base + "/#/", wait_until="networkidle")
+                visitor.reload(wait_until="networkidle")
+                visitor.wait_for_function("S.data?.ready")
+                alert = visitor.locator('#alert-bar').inner_text()
+                if state == "fresh":
+                    assert visitor.evaluate("FX.PAIR_KEYS.every(quoteFresh)")
+                    assert not visitor.locator('#alert-bar').is_visible(), alert
+                elif state == "stale":
+                    assert "Част от котировките временно не могат да се обновят" in alert, alert
+                    assert "Някои котировки са остарели" in alert, alert
+                else:
+                    assert "Липсват текущи цени" in alert
+                    assert visitor.evaluate("!S.engine && S.data.signals.length===0")
+                for route in ["", "pair/XAUUSD", "help", "news"]:
+                    visitor.goto(base + "/#/" + route, wait_until="networkidle")
+                    # textContent включва и сгънатите пояснения до графиката.
+                    text = visitor.locator('body').text_content()
+                    for private in ["Twelve Data", "Tiingo", "15:39", "HTTP 403", "HTTP 500", "tiingo_key", "api/config.local.php", "/server/private/path"]:
+                        assert private not in text, (state, route, private)
+            cached = visitor.evaluate("pulsSources({sources:[{name:'Tiingo — налични котировки',url:'https://www.tiingo.com/',updated:1793354400}]})")
+            assert "Пазарни котировки" in cached and "Tiingo" not in cached and "tiingo.com" not in cached
+            assert "Groq" not in visitor.evaluate("pulsError({code:'provider_limit',message:'Groq HTTP 429, groq_key'})")
+            print("OK: fresh fallback is silent; stale and missing data stay visible without provider names, limits, paths or raw errors, including cached assistant references")
+        finally:
+            visitor.close()
+            meta.clear()
+            meta.update(original_meta)
         browser.close()
 finally:
     server.shutdown()
