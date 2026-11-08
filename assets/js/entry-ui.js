@@ -5,17 +5,17 @@
    Помощните функции (px, sizing, targetCells…) са в app.js и се извикват при рендериране. */
 
 const BROKER_PRICES = new Map(); // id на сигнала → { price, at }
-const BROKER_PRICE_TTL = 15 * 60; // въведената цена важи 15 минути
+const BROKER_PRICE_TTL = 60; // моментна проверка, без обещание за изпълнение
 
 function brokerPrice(sig) {
   const saved = BROKER_PRICES.get(sig.id);
-  return saved && now() - saved.at <= BROKER_PRICE_TTL ? saved : null;
+  return saved && now() >= saved.at && now() - saved.at < BROKER_PRICE_TTL ? saved : null;
 }
 
 /** Цената за съвета: въведената от брокера, иначе последната котировка на сайта. */
 function entryQuote(sig) {
   const broker = brokerPrice(sig);
-  if (broker) return { price: broker.price, time: broker.at, source: "broker" };
+  if (broker) return { price: sig.dir === 1 ? broker.ask : broker.bid, bid: broker.bid, ask: broker.ask, time: broker.at, source: "broker" };
   const price = S.data?.pairs?.[sig.pair]?.price, time = Number(S.meta?.quotes?.[sig.pair]?.time) || null;
   return Number.isFinite(price) ? { price, time, source: "site" } : null;
 }
@@ -23,6 +23,97 @@ function entryQuote(sig) {
 const entryTimingFor = (sig) => pairRow(stratById(sig.strategy), sig.pair)?.timing || null;
 const entryLevelsFor = (sig) => FX.entryLevels(entryTimingFor(sig));
 const entryStrategy = (sig) => S.catalog?.[sig.strategy.slice(0, sig.strategy.lastIndexOf("-"))] || null;
+
+function readinessFor(sig, order, model, advice, quote) {
+  const info = FX.costs.info(sig.pair, S.costProfile), costs = info.costs;
+  const proposed = ["place", "wait"].includes(advice?.advice) ? advice.level ?? order.entry : quote.price;
+  const distance = Math.abs(proposed - model.stop);
+  const spread = Math.max((quote.ask ?? 0) - (quote.bid ?? 0), costs.spread * info.pip);
+  const costRatio = distance > 0 ? (spread + (costs.commission + costs.slippage) * info.pip) / distance : Infinity;
+  const row = pairRow(stratById(sig.strategy), sig.pair);
+  const report = row?.review;
+  const historyReady = !!(report?.full && report.training && report.holdout && report.stress && Array.isArray(report.years))
+    && FX.assessPair(report, false).status === "suitable";
+  const result = FX.entryReadiness({ now: now(), pair: sig.pair, dir: order.dir, quote,
+    marketOpen: S.data?.market?.open === true, goldBreak: S.data?.market?.gold_break,
+    modelFresh: quoteFresh(sig.pair), modelTime: Number(S.meta?.quotes?.[sig.pair]?.time),
+    expires: sig.status === "pending" ? sig.valid_until : null, activates: order.activate_after,
+    choice: signalPairChoice(sig), historyReady, newsTime: S.data?.news_updated, news: S.data?.news,
+    newsFailed: (S.meta?.errors || []).some((e) => /календар|новини|ForexFactory/i.test(String(e))),
+    balance: S.settings.balance, riskPct: S.settings.risk,
+    stats: RiskJournal.stats(journalTrades(), now()), plan: JOURNAL.plan, costRatio });
+  if (!["place", "enter", "wait"].includes(advice?.advice)) result.blocks.push({ code: "timing", text: "Цената или срокът вече не позволяват нов вход по този модел. Не гони движението и не влизай само защото цената е по-близо до стопа." });
+  if (!Number.isFinite(proposed) || !Number.isFinite(model.stop) || (proposed - model.stop) * order.dir <= 0)
+    result.blocks.push({ code: "stop", text: "Стопът е от грешната страна на новия вход." });
+  const size = sizing(sig.pair, { ...order, entry: proposed, stop: model.stop });
+  if (size?.invalid || size?.tooSmall) result.blocks.push({ code: "size", text: "Няма допустим обем за този стоп и избрания риск." });
+  result.allowed = result.blocks.length === 0;
+  return result;
+}
+
+/** Картите и графиката използват същите ограничения като подробния план. */
+function entryDisplayState(sig) {
+  const quote = entryQuote(sig), fresh = quote?.source === "broker" || quoteFresh(sig.pair);
+  const fallback = FX.signalTools.entryState(sig, quote?.price, now(), fresh, S.data?.market?.open !== false, entryLevelsFor(sig));
+  const data = entryAdviceFor(sig);
+  if (!data?.list?.length) return fallback;
+  const blocked = data.list.find((item) => !item.readiness.allowed);
+  if (blocked) return { state: "stale", label: "Провери преди нов вход", text: blocked.readiness.blocks[0].text };
+  if (fallback.advice === "enter") return { ...fallback, label: "Покрива проверките за демо", text: "Текущите проверки са изпълнени. Това не потвърждава бъдеща печалба или изпълнение при брокера." };
+  return fallback;
+}
+
+function scheduleEntryExpiry(id) {
+  setTimeout(() => {
+    const saved = BROKER_PRICES.get(id);
+    if (!saved || now() - saved.at < BROKER_PRICE_TTL) return;
+    BROKER_PRICES.delete(id);
+    invalidateEntryDisplay();
+  }, BROKER_PRICE_TTL * 1000 + 100);
+}
+
+function invalidateEntryDisplay() {
+  if (!S.data?.ready) return;
+  if (!typing()) { render(); return; }
+  document.querySelectorAll(".entry-now .steps-list,.entry-now .order-ticket").forEach((node) => node.remove());
+  document.querySelectorAll(".entry-verdict strong,.entry-state strong").forEach((node) => { node.textContent = "Провери отново текущите Bid и Ask."; });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  let expired = false;
+  for (const [id, saved] of BROKER_PRICES) if (now() < saved.at || now() - saved.at >= BROKER_PRICE_TTL) { BROKER_PRICES.delete(id); expired = true; }
+  if (expired) invalidateEntryDisplay();
+});
+
+function managementFor(sig) {
+  const trade = journalTrades().find((t) => t.signal_id === sig.id && t.dir === sig.dir && t.status === "open");
+  const strat = entryStrategy(sig);
+  const tpModes = (strat?.exit?.parts || []).map((p) => !!strat?.fixed_target || Number.isFinite(p[1]) && p[1] > 0);
+  return FX.managementPlan(sig, { tpModes, current: (S.data?.signals || []).some((s) => s.id === sig.id),
+    fresh: quoteFresh(sig.pair) && now() - Number(S.meta?.quotes?.[sig.pair]?.time) <= FX.READINESS.modelSeconds,
+    actualStop: trade?.current_stop });
+}
+
+function managementPanel(sig) {
+  const plan = managementFor(sig);
+  const level = (v) => Number.isFinite(v) ? px(sig.pair, v) : "няма фиксиран TP";
+  const initial = plan.initial.map((p) => `<p><strong>${p.dir === 1 ? "Покупка" : "Продажба"} · начален план по модела</strong><br>Вход ${level(p.entry)} · стартов SL ${level(p.stop)}<br>${p.targets.length ? p.targets.map((t, i) => `Стартов ${t.order ? "TP" : "изход по правило"} ${i + 1}: ${level(t.level)} (${F.num(0).format(t.weight * 100)}% от обема)`).join("<br>") : "Няма фиксиран TP — изходът е по правилото на стратегията."}</p>`).join("");
+  const targets = plan.current.filter((p) => !p.closed).map((p) => `${p.order ? "TP" : "Ниво за изход по правило"} за част ${p.index + 1}: ${level(p.level)}`).join(" · ");
+  const instructions = plan.actions.map((a) => {
+    if (a.code === "stop") return `Премести стопа от ${level(a.from)} на ${level(a.to)}, ако още е на предишното ниво при брокера.`;
+    if (a.code === "keep-stop") return `Твоят записан стоп ${level(a.level)} е по-защитен. Не го отдалечавай до моделното ниво.`;
+    if (a.code === "rule-target") return `Променено е нивото за изход по правило за част ${a.index + 1}: ${level(a.to)}. Това не е нова TP поръчка; провери условието на стратегията.`;
+    if (a.code === "target") return `TP за част ${a.index + 1} е променен по стратегията: стартов ${level(a.from)} → текущ ${level(a.to)}. Премести го, ако при брокера още е на старото ниво.`;
+    if (a.code === "partial") return `Моделът е затворил ${F.num(0).format(a.weight * 100)}% от първоначалния обем${a.at ? ` в ${when(a.at)}` : ""}. Провери дали тази част вече е изпълнена; не я затваряй повторно.`;
+    if (a.code === "cancel") return "Отмени неизпълнената поръчка — моделът вече е отменен.";
+    return `Моделът е приключил${a.at ? ` в ${when(a.at)}` : ""}: ${REASONS[a.reason] || "по правилото на стратегията"}. Ако твоята позиция още е отворена, провери текущата цена и приложи изхода по правилото.`;
+  });
+  return `<section class="panel management-plan"><p class="kicker">УПРАВЛЕНИЕ НА СДЕЛКАТА</p><h3>Стартови нива и следваща стъпка</h3>${initial}
+    ${sig.status === "open" ? `<p><strong>Сега по модела:</strong> SL ${level(plan.stop)}${targets ? ` · ${targets}` : ""}</p>` : ""}
+    ${plan.stale ? '<p class="warn-line">Няма достатъчно скорошно потвърждение. Нивата са справка; провери позицията при брокера преди промяна.</p>' : instructions.length ? `<ul class="rules">${instructions.map((text) => `<li>${esc(text)}</li>`).join("")}</ul>` : '<p class="what">Няма нова промяна по модела. Запази началния план и следвай правилото за изход.</p>'}
+    <p class="what">При плаващ стоп се мести SL, а не непременно TP. Без фиксирана цел остави TP празно; +1R/+2R са само ориентири. Указанията са ръчни и не доказват изпълнение при брокера.</p></section>`;
+}
 
 /** Минути до принудителното затваряне на дневната сделка, ако стратегията има такъв час. */
 function minutesToDayClose(sig) {
@@ -48,10 +139,11 @@ function entryAdviceFor(sig) {
   const levels = entryLevelsFor(sig), opts = { minutesLeft: minutesToDayClose(sig) };
   const list = ordersOf(sig).map((order) => {
     const model = entryModel(sig, order);
+    const price = quote.source === "broker" ? order.dir === 1 ? quote.ask : quote.bid : quote.price;
     const advice = sig.status === "open"
-      ? FX.entryAdvice(model, quote.price, levels, opts)
-      : FX.pendingAdvice({ ...order, targets: model.targets }, quote.price, levels, opts);
-    return { order, model, advice };
+      ? FX.entryAdvice(model, price, levels, opts)
+      : FX.pendingAdvice({ ...order, targets: model.targets }, price, levels, opts);
+    return { order, model, advice, price, readiness: readinessFor(sig, order, model, advice, { ...quote, price }) };
   }).filter((item) => item.advice);
   return { quote, reliable, levels, list };
 }
@@ -204,6 +296,7 @@ function entrySteps(sig, item, price) {
 const ADVICE_CLASS = { place: "wait", enter: "go", wait: "wait", late: "stop", against: "warn", too_close: "stop", stopped: "stop", void: "stop" };
 function adviceHeading(sig, item) {
   const a = item.advice;
+  if (a.advice === "enter") return "Входът покрива проверките за демо";
   if (a.advice === "place") return a.near ? "Около входа — постави поръчката" : "Чака вход — постави поръчката";
   if (a.advice === "void") return "Сигналът отпада";
   if (a.advice === "wait") return `Изчакай връщане до ${px(sig.pair, a.level)}`;
@@ -215,30 +308,32 @@ function entryNowPanel(sig) {
   if (!isCurrent(sig) || !(S.data?.signals || []).some((s) => s.id === sig.id)) return "";
   const orders = ordersOf(sig), dir = orders.length === 1 ? orders[0].dir : 0;
   const broker = brokerPrice(sig), data = entryAdviceFor(sig);
-  const priceLabel = dir === 1 ? "Ask (цената за покупка)" : dir === -1 ? "Bid (цената за продажба)" : "Bid";
   const form = `<form class="entry-price-form" data-entry-form="${esc(sig.id)}">
-      <label for="entry-price">Цена при брокера сега · ${priceLabel}</label>
-      <div class="entry-price-row"><input id="entry-price" name="price" type="text" inputmode="decimal" autocomplete="off" placeholder="напр. ${esc(px(sig.pair, pairInfo(sig.pair).price))}" value="${broker ? esc(px(sig.pair, broker.price)) : ""}">
-        <button class="btn btn-primary btn-sm">Сметни</button>${broker ? `<button type="button" class="btn btn-quiet btn-sm" data-entry-clear="${esc(sig.id)}">Изчисти</button>` : ""}</div></form>`;
+      <label for="entry-bid">Текущи цени при брокера · проверката важи 60 секунди</label>
+      <div class="entry-price-row"><input id="entry-bid" name="bid" aria-label="Bid при брокера" type="text" inputmode="decimal" autocomplete="off" placeholder="Bid" value="${broker ? esc(px(sig.pair, broker.bid)) : ""}">
+      <input id="entry-ask" name="ask" aria-label="Ask при брокера" type="text" inputmode="decimal" autocomplete="off" placeholder="Ask" value="${broker ? esc(px(sig.pair, broker.ask)) : ""}">
+        <button class="btn btn-primary btn-sm">Провери входа</button>${broker ? `<button type="button" class="btn btn-quiet btn-sm" data-entry-clear="${esc(sig.id)}">Изчисти</button>` : ""}</div></form>`;
   let source = "";
   if (data?.quote) {
     source = data.quote.source === "broker"
-      ? `Сметнато по въведената цена ${px(sig.pair, data.quote.price)} (${esc(F.time.format(new Date(data.quote.time * 1000)))}). Важи 15 минути.`
+      ? `Bid ${px(sig.pair, data.quote.bid)} · Ask ${px(sig.pair, data.quote.ask)} · въведени ${esc(F.time.format(new Date(data.quote.time * 1000)))}. Това е моментна проверка; цената при изпълнение може да се промени.`
       : `Сметнато по котировката на сайта ${px(sig.pair, data.quote.price)}${data.quote.time ? ` от ${esc(when(data.quote.time))}` : ""}. Тя може да закъснява до около ${S.data?.settings?.refresh_minutes || 20} минути — за точна сметка въведи цената от брокера.`;
   }
   let body;
   if (!data || !data.list.length) body = `<p class="what">Няма цена за изчисление. Въведи текущата цена от брокера.</p>`;
-  else if (!data.reliable) body = `<div class="entry-verdict entry-warn"><strong>Цената на сайта е стара</strong><span>Не преценявай входа по нея. Въведи текущата цена от брокера отгоре.</span></div>`;
+  else if (!data.reliable && !broker) body = `<div class="entry-verdict entry-warn"><strong>Цената на сайта е стара</strong><span>Не преценявай входа по нея. Въведи текущата цена от брокера отгоре.</span></div>`;
   else {
     const closed = S.data?.market?.open === false ? `<p class="warn-line">Пазарът е затворен. Отложените поръчки ще се изпълнят чак при отварянето, възможно с гап.</p>` : "";
     body = closed + data.list.map((item) => {
       const head = orders.length > 1 ? `<div class="order-title">${item.order.dir === 1 ? "▲ Покупка" : "▼ Продажба"}</div>` : "";
-      const facts = item.advice.advice === "place" || item.advice.advice === "void" ? [] : entryFacts(sig, item, data.quote.price);
+      const facts = item.advice.advice === "place" || item.advice.advice === "void" ? [] : entryFacts(sig, item, item.price);
       const reached = item.advice.reachedHere ? `<p class="what">При тази цена входът вече е достигнат, въпреки че данните на сайта още го показват като чакащ.</p>` : "";
-      const steps = entrySteps(sig, item, data.quote.price);
+      const check = item.readiness;
+      if (!check.allowed) return `${head}<div class="entry-verdict entry-warn"><strong>Пропусни новия вход засега</strong></div><ul class="entry-facts">${check.blocks.map((b) => `<li>${esc(b.text)}</li>`).join("")}</ul><p class="what">${check.warnings.map((w) => esc(w.text)).join(" ")}</p>`;
+      const steps = entrySteps(sig, item, item.price);
       const heading = adviceHeading(sig, item);
-      return `${head}<div class="entry-verdict entry-${ADVICE_CLASS[item.advice.advice] || "wait"}"><strong>${esc(heading)}</strong><span>${item.advice.advice === "place" ? `Цената е на ${F.num(1).format(pips(sig.pair, data.quote.price, item.order.entry))} пипса от входа.` : `Цената е на ${fmtR(item.advice.e)} от входа на модела.`}</span></div>${reached}
-        ${facts.length ? `<ul class="entry-facts">${facts.map((f) => `<li>${f}</li>`).join("")}</ul>` : ""}
+      return `${head}<div class="entry-verdict entry-${ADVICE_CLASS[item.advice.advice] || "wait"}"><strong>${esc(heading)}</strong><span>${item.advice.advice === "place" ? `Цената е на ${F.num(1).format(pips(sig.pair, item.price, item.order.entry))} пипса от входа.` : `Цената е на ${fmtR(item.advice.e)} от входа на модела.`}</span></div>${reached}
+        <p class="what">${check.warnings.map((w) => esc(w.text)).join(" ")}</p>${facts.length ? `<ul class="entry-facts">${facts.map((f) => `<li>${f}</li>`).join("")}</ul>` : ""}
         <div class="steps-list">${steps.map(([title, text, extra], i) => `<div class="step"><span class="step-index">${String(i + 1).padStart(2, "0")}</span><div><strong>${esc(title)}</strong><p>${esc(text)}</p>${extra || ""}</div></div>`).join("")}</div>
         ${item.advice.advice === "place" ? "" : `<p class="what">${esc(timingNote(sig, item.advice))}</p>`}`;
     }).join("");
@@ -251,7 +346,10 @@ function entryNowPanel(sig) {
 /** Ред за копирания план. */
 function entryPlanLine(sig) {
   const data = entryAdviceFor(sig), item = data?.list?.[0];
-  if (!item || !data.reliable) return null;
+  if (!item) return null;
+  const blocked = data.list.find((candidate) => !candidate.readiness.allowed);
+  if (blocked) return "Нов вход: пропусни засега. " + blocked.readiness.blocks.map((b) => b.text).join(" ");
+  if (!data.reliable) return null;
   const a = item.advice, where = data.quote.source === "broker" ? "по цената от брокера" : "по котировката на сайта";
   const head = a.advice === "wait" ? `Изчакай връщане до ${px(sig.pair, a.level)} (${FX.ORDER_KINDS[a.kind].name})` : a.advice === "place" ? `Постави ${FX.ORDER_KINDS[a.kind].name} на ${px(sig.pair, a.level)}` : FX.ADVICE_LABELS[a.advice] || "";
   return `Вход сега (${where} ${px(sig.pair, data.quote.price)}): ${head}.`;
@@ -262,13 +360,15 @@ document.addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   const sig = resolveSignal(form.dataset.entryForm);
-  const value = Number(String(new FormData(form).get("price") || "").replace(/\s/g, "").replace(",", "."));
+  const values = new FormData(form), read = (key) => Number(String(values.get(key) || "").replace(/\s/g, "").replace(",", "."));
+  const bid = read("bid"), ask = read("ask");
   const reference = sig ? (sig.status === "open" ? sig.fill_price : ordersOf(sig)[0].entry) : null;
-  if (!sig || !Number.isFinite(value) || value <= 0 || !(reference > 0) || Math.abs(value / reference - 1) > 0.2) {
-    toast("Въведи текущата цена от брокера, например " + (sig ? px(sig.pair, reference) : "1.08500") + ".");
+  if (!sig || ![bid, ask].every(Number.isFinite) || bid <= 0 || ask <= bid || !(reference > 0) || [bid, ask].some((value) => Math.abs(value / reference - 1) > 0.2)) {
+    toast("Въведи положителни Bid и Ask от брокера. Ask трябва да е над Bid и цените да са за този инструмент.");
     return;
   }
-  BROKER_PRICES.set(sig.id, { price: value, at: now() });
+  BROKER_PRICES.set(sig.id, { bid, ask, at: now() });
+  scheduleEntryExpiry(sig.id);
   document.activeElement?.blur?.();
   render();
   document.getElementById("entry-now")?.scrollIntoView?.({ block: "start" });
@@ -318,7 +418,7 @@ function orderGuide() {
     ${item("Две части с две цели", "<p>Ако сигналът има Цел 1 и Цел 2, поставяш две поръчки с половината обем: първата с Take Profit = Цел 1, втората с Take Profit = Цел 2. След Цел 1 премести стопа на втората на входа само ако стратегията го казва.</p>")}
     ${item("Плаващ стоп (Trailing Stop)", "<p>Вграденият Trailing Stop в MetaTrader следва цената на фиксиран брой точки. Това не е същото като плаващ стоп по ATR или по индикатор от стратегията. Ползвай го само ако правилото го описва така; иначе местиш стопа ръчно по правилото.</p>")}
     ${item("Гап и приплъзване", "<p>При отваряне в понеделник или след силна новина цената може да прескочи нивото. Стоп поръчките, включително Stop Loss, се изпълняват на първата налична цена, която може да е по-лоша. Лимитните се изпълняват на нивото или по-добре. Затова реалната загуба може да е по-голяма от сметнатата.</p>")}
-    ${item("Влизане след сигнала: може, изчакай, късно", `<p>На страницата на всеки текущ сигнал има „Мога ли да вляза сега?“. Въведи цената от брокера и ще видиш едно от следните:</p><ul class="rules">
+    ${item("Влизане след сигнала: може, изчакай, късно", `<p>На страницата на всеки текущ сигнал има „Мога ли да вляза сега?“. Въведи текущите Bid и Ask от брокера. Проверката важи 60 секунди и включва историята, модела, новините, разходите и риска. Ако тя допуска вход, ще видиш едно от следните:</p><ul class="rules">
         <li><strong>Може да се влезе</strong> — цената е близо до входа на модела. Влизаш пазарно със стопа на модела и обем, сметнат за текущата цена.</li>
         <li><strong>Изчакай връщане до X</strong> — цената е отминала входа. Поставяш Buy Limit или Sell Limit на X и я изтриваш, ако цената стигне нивото „късно“ или целта.</li>
         <li><strong>Късно — не влизай</strong> — цената е твърде далеч, целта или първата част вече са взети, или до затварянето на дневната сделка остава малко.</li>

@@ -340,7 +340,7 @@ function chartSignalBox(st) {
   let advice = "";
   if (isCurrent(sig)) {
     const quote = entryQuote(sig), fresh = quote?.source === "broker" || quoteFresh(pair);
-    const state = FX.signalTools.entryState(sig, quote?.price, now(), fresh, S.data?.market?.open !== false, entryLevelsFor(sig));
+    const state = entryDisplayState(sig);
     advice = `<div class="entry-state entry-${esc(state.state)}"><strong>${esc(state.label)}</strong><span>${esc(state.text)}</span></div>`;
   }
   const why = !isCurrent(sig) ? "" : !isFollowed(sig.strategy) ? "не следваш тази стратегия"

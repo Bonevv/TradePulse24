@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        fixture = {"/api/state.php": {"release": "5.3", "costs": {"pairs": {}}}, "/data/meta.json": meta,
+        fixture = {"/api/state.php": {"release": "5.4", "costs": {"pairs": {}}}, "/data/meta.json": meta,
                    "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": [], "updated": meta["prices_updated"]}}.get(path)
         if fixture is not None:
             body = json.dumps(fixture).encode()
@@ -201,6 +201,50 @@ try:
         print("OK: phone shows the simple chart by default and the interactive one when chosen in settings")
         touch.close()
         print("OK: touch controls move and reset panels in a mobile browser")
+
+        precision = browser.new_page(viewport={"width": 390, "height": 844})
+        precision.route("**/*", network)
+        precision.on("pageerror", lambda error: errors.append(str(error)))
+        precision.goto(base + "/#/", wait_until="networkidle")
+        precision.wait_for_function("S.data?.ready")
+        precision.evaluate("""() => {
+          window.precisionTime = Date.UTC(2026,10,9,12)/1000; Date.now=()=>window.precisionTime*1000;
+          const s=S.data.signals.find(s=>s.status==='open');
+          window.precisionSignal={...s,id:'precision-check-H1',pair:'EURUSD',pair_name:'EUR/USD',dir:1,status:'open',style:'day',tf:'H1',
+            fill_price:1.1,entry:1.1,stop:1.099,stop0:1.099,tp1:1.101,tp2:1.102,half:false,
+            parts:[{w:.5,tp:1.101,px:null},{w:.5,tp:1.102,px:null}]};
+          S.data.signals=[window.precisionSignal]; S.data.market={open:true,gold_break:false};
+          S.data.news_updated=window.precisionTime;S.data.news=[];S.meta.errors=[];
+          S.meta.quotes.EURUSD={price:1.1,time:window.precisionTime};
+          S.settings.balance=2000;S.settings.risk=.25;JOURNAL.trades=[];
+          JOURNAL.plan={daily:1,weekly:3,open:1,instrument:.5,currency:1};
+          const e=stratById(s.strategy);e.retired=false;e.provisional=false;e.costs_outdated=false;e.stats.end=window.precisionTime;
+          if(e.pair_review){e.pair_review.data_end=window.precisionTime;e.pair_review.version=e.version||1;}
+          e.per_pair=[{pair:'EURUSD',verdict:'good',trades:100,avg_r:.2,review:{full:{trades:100,avg_r:.2,profit_factor:1.5},training:{trades:70,avg_r:.2},holdout:{trades:30,avg_r:.2},stress:{avg_r:.1},years:[{trades:30,avg_r:.2},{trades:30,avg_r:.2}]}}];
+          history.replaceState(null,'','#/signal/'+window.precisionSignal.id);render();
+        }""")
+        assert precision.locator('#entry-now .order-ticket').count() == 0
+        precision.locator('[name="bid"]').fill('1.10000')
+        precision.locator('[name="ask"]').fill('1.10005')
+        precision.locator('[data-entry-form] button[type="submit"], [data-entry-form] button:not([type])').first.click()
+        assert precision.locator('#entry-now .order-ticket').count() > 0
+        assert "демо" in precision.locator('#entry-now').inner_text()
+        assert precision.locator('.management-plan').count() == 1
+        assert precision.evaluate("entryAdviceFor(window.precisionSignal).list[0].price") == 1.10005
+        precision.evaluate("S.data.news=[{impact:'high',currency:'USD',time:window.precisionTime+600}];render()")
+        assert precision.locator('#entry-now .order-ticket').count() == 0
+        assert "важна новина" in precision.locator('#entry-now').inner_text()
+        precision.evaluate("S.data.news=[];S.data.news_updated=0;render()")
+        assert "Календарът" in precision.locator('#entry-now').inner_text()
+        precision.evaluate("S.data.news_updated=window.precisionTime;JOURNAL.plan.open=.1;render()")
+        assert "отворен риск" in precision.locator('#entry-now').inner_text()
+        precision.evaluate("JOURNAL.plan.open=1;window.precisionTime+=61;document.dispatchEvent(new Event('visibilitychange'))")
+        assert precision.locator('#entry-now .order-ticket').count() == 0
+        assert precision.evaluate("brokerPrice(window.precisionSignal)===null")
+        assert precision.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert not errors, errors
+        precision.close()
+        print("OK: actual Bid/Ask form, Ask for buys, calendar/news/risk blocks, expired quotes remove tickets, mobile management plan")
 
         original_meta = json.loads(json.dumps(meta))
         visitor = browser.new_page(viewport={"width": 1440, "height": 1000})

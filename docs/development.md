@@ -34,6 +34,7 @@ node tests/observation-risk-costs.js
 php tests/maintenance.php
 php tests/login.php
 node tests/entry.js
+node tests/readiness.js
 node tests/chart.js
 node tests/chart-context.js
 php tests/prices.php
@@ -118,8 +119,8 @@ location ~ ^/data/.*\.(php|phtml|phar|lock|tmp[0-9]*)$ { deny all; }
 След проверките и обновяване на `release.json`:
 
 ```sh
-python tests/package.py --output /tmp/TradePulse24-5.3-update.zip
-python tests/update.py /tmp/TradePulse24-5.3-update.zip
+python tests/package.py --output /tmp/TradePulse24-5.4-update.zip
+python tests/update.py /tmp/TradePulse24-5.4-update.zip
 ```
 
 Пакетът включва runtime файловете от списъка на версията и документацията. Тестът за обновяване пази примерни конфигурации, всички 24 ценови файла, работните резултати и частните копия. ZIP и SHA-256 файлът се публикуват отделно от основния клон с кода.
@@ -145,3 +146,5 @@ npm run check
 `tests/feed-browser.py` от корена на проекта стартира два локални сървъра. Проверява четенето през друг origin, условния отговор 304, една споделена заявка за трите исторически периода и отказа на общия кеш. При отказ не се подменят времената на цените и няма местно теглене. `tests/cloudflare.php` проверява валидацията, сървърния кеш и изолиран cron с изрично забранен ценови път.
 
 `api/cloudflare.php` свързва PHP с общите данни. `api/state.php` публикува само адреса, версията и профила на разходите. `cloudflare/src/worker.mjs` маршрутизира четенето към KV; `feed.mjs` е единственият източник на ценови заявки. `FEED_ADMIN_TOKEN` се изпраща в Authorization header. Не записвай токени в URL, логове или тестови файлове.
+
+`readiness.js` проверява валидността на брокерски цени, пазарни часове, активиране/изтичане, история, календар, новинарски прозорец и проектирания риск. Проверява и SL/TP за покупки и продажби, запазването на по-защитен стоп, частичните изходи и липсата на измислен TP. Браузърната проверка в `workspace.py` използва истинската Bid/Ask форма и доказва, че при отказ и изтекла цена бланката за нов вход изчезва.

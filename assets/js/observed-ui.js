@@ -46,7 +46,7 @@ function signalAvailability(sig) {
     return '<div class="entry-state entry-stale"><strong>Няма актуално изчисление</strong><span>Показан е последният запазен запис. Провери данните, преди да използваш нивата.</span></div>';
   // Ако е въведена цена от брокера, съветът на картата е по нея.
   const quote = entryQuote(sig), fresh = (quote?.source === "broker" || quoteFresh(sig.pair)) && (S.data?.signals || []).some((current) => current.id === sig.id);
-  const state = FX.signalTools.entryState(sig, quote?.price, now(), fresh, S.data?.market?.open !== false, entryLevelsFor(sig));
+  const state = entryDisplayState(sig);
   if (!["pending", "open"].includes(sig.status)) return "";
   return `<div class="entry-state entry-${state.state}"><strong>${esc(state.label)}</strong><span>${esc(state.text)}</span></div>`;
 }

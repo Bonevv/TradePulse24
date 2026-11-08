@@ -767,6 +767,10 @@ function sizeBlock(sig, o, idx, total) {
 }
 
 function stepsFor(sig) {
+  if (sig.status === "pending") {
+    const check = entryAdviceFor(sig)?.list?.find((item) => !item.readiness.allowed)?.readiness;
+    if (check) return [["Не поставяй нова поръчка засега", check.blocks.map((b) => b.text).join(" ")]];
+  }
   if (!(S.data?.signals || []).some((s) => s.id === sig.id))
     return [["Не отваряй нова позиция по този запис", "Сигналът е запазен само в личната история. Няма актуално потвърждение от пазара."]];
   if (!quoteFresh(sig.pair))
@@ -869,6 +873,7 @@ function viewSignal(id) {
     ${signalAvailability(sig)}${conflictNotice(sig.pair)}
     <div class="status-box ${boxCls}"><strong>${esc(st.label)}.</strong> ${esc(st.text)}</div>
     ${entryNowPanel(sig)}
+    ${managementPanel(sig)}
     <div class="detail-grid"><div class="detail-column">
       <section class="panel trade-plan-panel"><div class="panel-head"><div><p class="kicker">НИВА</p><h3>${orders.length > 1 ? "Две възможни посоки" : "Вход, стоп и цели"}</h3></div><span class="pill pill-neutral">${esc(sig.tf_label)}</span></div>
         ${orders.map((o) => `${orders.length > 1 ? `<div class="order-title" style="margin-top:10px">${o.dir === 1 ? "▲ Покупка" : "▼ Продажба"}</div>` : ""}
@@ -1458,7 +1463,13 @@ function planText(sig) {
   if (ownExit(strat) && strat.exit_rules?.length) lines.push(`Правило за изход: ${strat.exit_rules.join(" ")}`);
   if (sig.status === "pending" && ordersOf(sig)[0].type !== "market") lines.push(`Важи до: ${when(sig.valid_until)}`);
   const entryLine = isCurrent(sig) ? entryPlanLine(sig) : null;
-  if (entryLine) lines.push(entryLine);
+  if (entryLine) lines.unshift(entryLine);
+  if (sig.status === "open") {
+    const management = managementFor(sig);
+    lines.push(management.stale ? "Управление: липсва скорошно потвърждение; не променяй поръчки само по този запис." : `Текущ SL по модела: ${px(sig.pair, management.stop)}.`);
+    if (!management.stale) for (const part of management.current.filter((part) => !part.closed))
+      lines.push(`${part.order ? "Текущ TP" : "Изход по правило"} за част ${part.index + 1}: ${part.level == null ? "без фиксирана цел" : px(sig.pair, part.level)}.`);
+  }
   lines.push("Не е инвестиционен съвет.");
   return lines.join("\n");
 }
