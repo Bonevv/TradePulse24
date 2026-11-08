@@ -6,6 +6,6 @@
 
 Направи резервни копия. Разархивирай пакета и качи съдържанието в PHP хостинга със замяна на кодовите файлове. Не изтривай съществуващия сайт. Ключовете, ценовата история, собствените резултати и дневниците се запазват. Презареди с Ctrl+F5 и провери файловете от Лабораторията. Само публикуване на Worker в Cloudflare не обновява интерфейса на PHP сайта.
 
-[Правила на проверките](https://github.com/Bonevv/TradePulse24/blob/87de157ba989592832d1e518e6c98a7aade2aeec/docs/precision.md) · [Обновяване](https://github.com/Bonevv/TradePulse24/blob/87de157ba989592832d1e518e6c98a7aade2aeec/docs/updating.md) · [Код](https://github.com/Bonevv/TradePulse24/tree/87de157ba989592832d1e518e6c98a7aade2aeec)
+[Правила на проверките](https://github.com/Bonevv/TradePulse24/blob/a67f06b7d0de4209fc8da772445ed33c8e657949/docs/precision.md) · [Обновяване](https://github.com/Bonevv/TradePulse24/blob/a67f06b7d0de4209fc8da772445ed33c8e657949/docs/updating.md) · [Код](https://github.com/Bonevv/TradePulse24/tree/a67f06b7d0de4209fc8da772445ed33c8e657949)
 
 Контролната сума е в .sha256. Този клон съдържа само файловете за изтегляне.
