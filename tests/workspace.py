@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        fixture = {"/api/state.php": {"release": "5.4", "costs": {"pairs": {}}}, "/data/meta.json": meta,
+        fixture = {"/api/state.php": {"release": "5.4.1", "costs": {"pairs": {}}}, "/data/meta.json": meta,
                    "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": [], "updated": meta["prices_updated"]}}.get(path)
         if fixture is not None:
             body = json.dumps(fixture).encode()
@@ -245,6 +245,17 @@ try:
         assert not errors, errors
         precision.close()
         print("OK: actual Bid/Ask form, Ask for buys, calendar/news/risk blocks, expired quotes remove tickets, mobile management plan")
+
+        broken = browser.new_page()
+        broken.route("**/*", network)
+        broken.route("**/api/state.php", lambda route: route.fulfill(status=500, content_type="application/json", body='{"ok":false,"code":"configuration_invalid"}'))
+        broken.goto(base + "/#/", wait_until="networkidle")
+        broken.wait_for_function("S.data?.ready")
+        assert "Настройките на сайта не могат да се заредят" in broken.locator('body').inner_text()
+        assert "Липсват текущи цени" not in broken.locator('body').inner_text()
+        assert broken.evaluate("!S.engine && S.data.signals.length===0")
+        broken.close()
+        print("OK: settings endpoint failure is not misreported as missing quotes and cannot enable new signals")
 
         original_meta = json.loads(json.dumps(meta))
         visitor = browser.new_page(viewport={"width": 1440, "height": 1000})

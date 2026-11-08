@@ -281,7 +281,7 @@ function openSecondsSince(t) {
 
 function chartNotices(st) {
   const out = [], name = FX.PAIRS[st.pair].name, q = S.meta?.quotes?.[st.pair];
-  if (!S.engine) out.push(["warn", st.series ? "Показана е записаната история. Липсват текущи цени за потвърждение на нов вход." : "Липсват текущи свещи. Можеш да отвориш наличните файлове с „По-стара история“."]);
+  if (!S.engine) out.push(["warn", S.configurationUnavailable ? "Настройките на сайта не са достъпни. Новите сигнали са спрени до възстановяването им." : st.series ? "Показана е записаната история. Липсват текущи цени за потвърждение на нов вход." : "Липсват текущи свещи. Можеш да отвориш наличните файлове с „По-стара история“."]);
   else if (!st.series) out.push(["warn", `Няма достатъчно завършени свещи за ${name} на графика ${FX.TIMEFRAMES[st.tf].label}.`]);
   if (S.engine && S.data.market?.open && !quoteFresh(st.pair))
     out.push(["warn", `Котировката за ${name} е стара${q?.time ? ` (последна: ${when(q.time)})` : ""}. Свещите и нивата са от последните налични данни. Не ги ползвай за вход, преди да провериш цената при брокера.`]);

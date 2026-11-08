@@ -4,12 +4,14 @@ declare(strict_types=1);
 // Само четене от общия кеш. Тук няма заявки към ценови доставчик.
 function cloudflare_feed_url(?array $config = null): string
 {
-    $value = rtrim(trim((string) (($config ?? cfg())['cloudflare_feed_url'] ?? '')), '/');
+    $raw = ($config ?? cfg())['cloudflare_feed_url'] ?? '';
+    if (!is_string($raw)) throw new RuntimeException('Невалиден адрес на общите данни.');
+    $value = rtrim(trim($raw), '/');
     if ($value === '') return '';
     $url = parse_url($value);
-    if (!$url || ($url['scheme'] ?? '') !== 'https' || empty($url['host']) || isset($url['user']) || isset($url['pass']) || isset($url['query']) || isset($url['fragment']) || !empty($url['path']))
+    if (!$url || ($url['scheme'] ?? '') !== 'https' || empty($url['host']) || isset($url['user']) || isset($url['pass']) || isset($url['query']) || isset($url['fragment']) || !in_array($url['path'] ?? '', ['', '/admin', '/snapshot'], true))
         throw new RuntimeException('Невалиден адрес на общите данни.');
-    return $value;
+    return preg_replace('~/(admin|snapshot)$~', '', $value);
 }
 
 function validate_cloudflare_snapshot($data, int $now): array

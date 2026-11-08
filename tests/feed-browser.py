@@ -32,7 +32,7 @@ class Site(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         local_paths.append(path)
-        data = {"/api/state.php": {"release": "5.4", "costs": {}, "feed_url": feed_url}, "/data/meta.json": meta,
+        data = {"/api/state.php": {"release": "5.4.1", "costs": {}, "feed_url": feed_url}, "/data/meta.json": meta,
                 "/data/recent.json": {"prices": prices}, "/data/news.json": {"events": []}}.get(path)
         if data is not None:
             self.send_response(200)

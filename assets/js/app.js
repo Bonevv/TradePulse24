@@ -1339,8 +1339,9 @@ let loadSequence = 0;
 async function load() {
   const seq = ++loadSequence;
   try {
-  const costs = await getJSON("api/state.php", { costs: {}, feed_url: S.feedURL || "" });
+  const costs = await getJSON("api/state.php", { configuration_unavailable: true, feed_url: S.feedURL || "" });
   if (seq !== loadSequence) return;
+  S.configurationUnavailable = !!costs?.configuration_unavailable;
   const feedURL = typeof costs?.feed_url === "string" ? costs.feed_url.replace(/\/$/, "") : "";
   if (feedURL !== S.feedURL) { S.feedSnapshot = null; FEED_HISTORY.clear(); }
   S.feedURL = feedURL;
@@ -1367,9 +1368,11 @@ async function load() {
   S.results = results;
   const entriesMap = (results && results.entries) || {};
   const hasQuotes = Object.values(meta?.quotes || {}).some((q) => q && Number.isFinite(q.price) && q.price > 0 && Number.isFinite(q.time) && q.time > 0);
-  if (!meta || !recent || !meta.prices_updated || !hasQuotes) {
+  if (costs?.configuration_unavailable || !meta || !recent || !meta.prices_updated || !hasQuotes) {
     S.engine = null;
-    S.error = "Липсват текущи цени. Показваме само историята на стратегиите, без активни сигнали.";
+    S.error = costs?.configuration_unavailable
+      ? "Настройките на сайта не могат да се заредят. Новите сигнали са спрени до възстановяването им."
+      : "Липсват текущи цени. Показваме само историята на стратегиите, без активни сигнали.";
     S.data = { ready: true,
       strategies: Object.values(entriesMap).filter(currentEntry).map(researchEntry),
       signals: [], pairs: Object.fromEntries(FX.PAIR_KEYS.map((key) => [key, { ...FX.PAIRS[key], price: null, change_pct: null }])),

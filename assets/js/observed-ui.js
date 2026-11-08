@@ -52,6 +52,7 @@ function signalAvailability(sig) {
 }
 
 function noSignalsReason() {
+  if (S.configurationUnavailable) return "Настройките на сайта не могат да се заредят. Новите сигнали са спрени до възстановяването им.";
   if (!S.data?.prices_updated) return "Липсват текущи цени. Виж състоянието на обновяването в Лабораторията.";
   if (!S.data.market?.open) return "Пазарът е затворен. Последните нива остават достъпни в следените сигнали и журнала.";
   if (!FX.PAIR_KEYS.some(quoteFresh)) return "Котировките са остарели. Изчакваме обновяване от източника.";

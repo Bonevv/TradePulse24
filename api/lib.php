@@ -76,12 +76,23 @@ function cfg(): array
             @opcache_invalidate(__DIR__ . '/config.php', true);
             @opcache_invalidate(__DIR__ . '/config.local.php', true);
         }
-        $c = require __DIR__ . '/config.php';
-        if (is_file(__DIR__ . '/config.local.php')) $c = array_merge($c, require __DIR__ . '/config.local.php');
+        // Публичният архив съдържа само примера. config.local.php трябва да работи и без config.php.
+        $readConfig = static function (string $path): array {
+            ob_start();
+            try { $value = require $path; }
+            finally { ob_end_clean(); } // BOM или случайно echo в настройките не поврежда JSON отговора.
+            if (!is_array($value)) throw new RuntimeException('Настройките трябва да връщат масив.');
+            return $value;
+        };
+        $loaded = is_file(__DIR__ . '/config.example.php') ? $readConfig(__DIR__ . '/config.example.php') : [];
+        foreach (['config.php', 'config.local.php'] as $name)
+            if (is_file(__DIR__ . '/' . $name)) $loaded = array_merge($loaded, $readConfig(__DIR__ . '/' . $name));
+        if (!$loaded) throw new RuntimeException('Липсват настройки на сайта.');
         foreach (['CLOUDFLARE_FEED_URL' => 'cloudflare_feed_url', 'TIINGO_API_KEY' => 'tiingo_key', 'TWELVEDATA_API_KEY' => 'twelvedata_key', 'TP24_ADMIN_PASSWORD' => 'admin_password', 'TP24_CRON_TOKEN' => 'cron_token', 'GROQ_API_KEY' => 'groq_key', 'GROQ_MODEL' => 'groq_model'] as $variable => $key) {
             $value = getenv($variable);
-            if ($value !== false && $value !== '') $c[$key] = $value;
+            if ($value !== false && $value !== '') $loaded[$key] = $value;
         }
+        $c = $loaded;
     }
     return $c;
 }
