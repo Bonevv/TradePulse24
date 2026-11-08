@@ -1,3 +1,4 @@
+import { fetchCalendar, newsInterval, newsMode } from "./calendar.mjs";
 // Общите данни са отделени от HTTP посетителите. Само координаторът тегли от доставчици.
 export const PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCHF", "USDCAD", "NZDUSD", "XAUUSD"];
 export const TFS = { M15: 900, H1: 3600, D1: 86400 };
@@ -139,7 +140,7 @@ export class FeedService {
 
   exclusive(job) {
     if (this.flight) return Promise.resolve({ ok: false, busy: true });
-    this.flight = (async () => { await this.ready; this.recentChanges = new Map(); return job(); })().finally(() => { this.flight = null; this.recentChanges = null; });
+    this.flight = (async () => { await this.ready; this.recentChanges = new Map(); this.pendingNews = null; return job(); })().finally(() => { this.flight = null; this.recentChanges = null; this.pendingNews = null; });
     return this.flight;
   }
 
@@ -236,9 +237,9 @@ export class FeedService {
   async tick() {
     return this.exclusive(async () => {
       if (!this.state.seeded) return { ok: false, needs_seed: true };
-      if (!this.env.TIINGO_API_KEY && !this.env.TWELVEDATA_API_KEY) return { ok: false, needs_keys: true };
+      const priceKeys = !!(this.env.TIINGO_API_KEY || this.env.TWELVEDATA_API_KEY);
       const now = this.now(), schedule = due(now, this.state.attempt, this.env);
-      if (schedule.due) {
+      if (schedule.due && priceKeys) {
         this.state.attempt = now; await this.save(); // След прекъсване не повтаряме същия цикъл.
         for (const pair of PAIRS) {
           const archive = await this.history(pair);
@@ -261,33 +262,54 @@ export class FeedService {
           await this.save();
         }
       }
-      if (now - (this.state.news_attempt || this.state.news_at) >= 3600) await this.updateNews();
+      if (this.state.news_mode !== newsMode(this.env) || now - (this.state.news_attempt || this.state.news_at) >= newsInterval(this.env) - 60) await this.updateNews();
       await this.save();
-      if (schedule.due || this.state.news_changed) await this.publish();
+      if (schedule.due && priceKeys || this.state.news_changed) await this.publish();
       this.state.news_changed = false; await this.save();
-      return { ok: true, price_due: schedule.due };
+      return { ok: priceKeys, price_due: schedule.due && priceKeys, ...(!priceKeys ? { needs_keys: true } : {}) };
     });
   }
 
   async updateNews() {
-    this.state.news_attempt = this.now(); await this.save();
-    try {
-      const response = await this.fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", { signal: AbortSignal.timeout(20000) });
-      if (!response.ok) throw new Error("calendar");
-      const data = await response.json(); if (!Array.isArray(data)) throw new Error("calendar");
-      const old = await this.kv.get("calendar", "json") || { events: [] }, now = this.now(), events = new Map();
-      for (const e of data) {
-        const time = Date.parse(e.date) / 1000, title = String(e.title || "").slice(0, 300), currency = String(e.country || "");
-        if (!Number.isFinite(time) || !title || !/^[A-Z]{3}$/.test(currency)) continue;
-        const bytes = await crypto.subtle.digest("SHA-1", encoder.encode(title + "|" + currency + "|" + time));
-        const id = [...new Uint8Array(bytes)].map((v) => v.toString(16).padStart(2, "0")).join("").slice(0, 12);
-        events.set(id, { id, time, title, currency, source: "ForexFactory — седмичен календар", impact: ({ High: "high", Medium: "medium", Low: "low", Holiday: "holiday" })[e.impact] || "low", forecast: String(e.forecast ?? ""), previous: String(e.previous ?? ""), actual: time <= now && e.actual != null ? String(e.actual) : null });
-      }
-      const firstNew = events.size ? Math.min(...[...events.values()].map((e) => e.time)) : now;
-      for (const e of old.events) if (e.time >= now - 30 * 86400 && e.time < firstNew && !events.has(e.id)) events.set(e.id, e);
-      await putJSON(this.kv, "calendar", { events: [...events.values()].sort((a, b) => a.time - b.time), updated: now });
-      this.state.news_at = now; this.state.news_changed = true; this.state.news_problem = false;
-    } catch (_) { this.state.news_problem = true; }
+    const previousAttempt = this.state.news_attempt || 0;
+    this.state.news_attempt = this.now(); this.state.news_mode = newsMode(this.env); await this.save();
+    const result = await fetchCalendar(this.env, this.state, { fetch: this.fetch, now: this.now, save: () => this.save() });
+    if (result?.waiting) { this.state.news_attempt = previousAttempt; await this.save(); return; }
+    if (!result) {
+      const reused = this.state.news_provider === "forexfactory" && this.now() - this.state.news_at < 3600;
+      if (this.state.news_problem !== !reused) this.state.news_changed = true;
+      this.state.news_problem = !reused; return;
+    }
+    const old = await this.kv.get("calendar", "json") || { events: [] }, now = this.now();
+    const firstNew = result.events[0].time, events = new Map(result.events.map((event) => [event.id, event]));
+    for (const e of old.events) if (e.time >= now - 30 * 86400 && e.time < firstNew && !events.has(e.id)) events.set(e.id, e);
+    const calendar = { events: [...events.values()].sort((a, b) => a.time - b.time), updated: result.updated };
+    await putJSON(this.kv, "calendar", calendar); this.pendingNews = calendar;
+    this.state.news_at = result.updated; this.state.news_provider = result.provider;
+    this.state.news_changed = true; this.state.news_problem = false;
+  }
+
+  async refreshNews() {
+    return this.exclusive(async () => {
+      if (!this.state.seeded) return { ok: false, needs_seed: true };
+      const jb = this.state.calendar_providers?.jbnews, ff = this.state.calendar_providers?.forexfactory;
+      const modeChanged = this.state.news_mode !== newsMode(this.env);
+      const primary = this.env.JBLANKED_API_KEY ? jb : ff;
+      const pause = this.env.JBLANKED_API_KEY ? 300 : 3600;
+      if (!modeChanged && primary?.attempt && this.now() - primary.attempt < pause)
+        return { ok: !this.state.news_problem, calendar: this.calendarStatus() };
+      await this.updateNews(); await this.save();
+      await this.publish(); this.state.news_changed = false; await this.save();
+      return { ok: !this.state.news_problem, calendar: this.calendarStatus() };
+    });
+  }
+
+  calendarStatus() {
+    return { jbnews_configured: !!this.env.JBLANKED_API_KEY, timezone: this.env.JBLANKED_TIMEZONE || null,
+      last_attempt: this.state.news_attempt || 0, last_success: this.state.news_at || 0,
+      source: this.state.news_provider || null, problem: !!this.state.news_problem,
+      providers: this.state.calendar_providers || {},
+      note: "При timezone_required провери часовата зона в документацията на доставчика и задай JBLANKED_TIMEZONE. Часове без зона не се приемат като UTC по предположение." };
   }
 
   async publish() {
@@ -300,16 +322,16 @@ export class FeedService {
       }
       const q = this.state.quotes[pair]; if (q) quotes[pair] = { price: q.price, time: q.time, fetched_at: q.fetched_at };
     }
-    const news = await this.kv.get("calendar", "json") || { events: [], updated: 0 };
+    const news = this.pendingNews || await this.kv.get("calendar", "json") || { events: [], updated: 0 };
     const errors = this.state.news_problem ? ["Календарът временно не може да се обнови."] : [];
     const meta = { quotes, updated: now, prices_updated: Math.min(now, Math.max(0, ...Object.values(quotes).map((q) => q.time))), price_attempt: this.state.attempt,
-      next_price_at: nextPrice(this.state.attempt || now, this.env), refresh_minutes: clamp(this.env.REFRESH_MINUTES, 15, 15, 60), news_updated: news.updated, errors };
+      next_price_at: nextPrice(this.state.attempt || now, this.env), refresh_minutes: clamp(this.env.REFRESH_MINUTES, 15, 15, 60), news_updated: news.updated, source_news: this.state.news_provider === "jbnews" ? "MQL5 · чрез JB-News" : "ForexFactory — седмичен календар", errors };
     await putJSON(this.kv, "snapshot", { schema: SCHEMA, meta, recent: { generated: now, prices }, news });
   }
 
   async status() {
     await this.ready;
-    return { ok: true, seeded: !!this.state.seeded, busy: !!this.flight, last_attempt: this.state.attempt, next_attempt: nextPrice(this.state.attempt || this.now(), this.env),
+    return { ok: true, calendar: this.calendarStatus(), seeded: !!this.state.seeded, busy: !!this.flight, last_attempt: this.state.attempt, next_attempt: nextPrice(this.state.attempt || this.now(), this.env),
       providers: Object.fromEntries(["tiingo", "twelve"].map((name) => [name, { configured: !!(name === "tiingo" ? this.env.TIINGO_API_KEY : this.env.TWELVEDATA_API_KEY), ...this.state.providers[name] }])) };
   }
 }

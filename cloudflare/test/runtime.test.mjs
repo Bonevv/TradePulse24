@@ -4,18 +4,23 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { PAIRS, SEED_BASE } from "../src/feed.mjs";
+import { JB_CALENDAR } from "../src/calendar.mjs";
 
 test("Cloudflare runtime: KV, SQLite coordinator, admin auth and conditional CORS reads", async () => {
-  let outbound = 0, allowSeed = false;
+  let outbound = 0, allowSeed = false, allowCalendar = false;
   const token = "local-cloudflare-test-token-only";
   const mf = new Miniflare(convertV4MiniflareOptions({
     workers: [{ name: "feed",
-    modules: ["worker.mjs", "feed.mjs", "admin.mjs"].map((file) => ({ type: "ESModule", path: fileURLToPath(new URL("../src/" + file, import.meta.url)) })),
+    modules: ["worker.mjs", "feed.mjs", "admin.mjs", "calendar.mjs"].map((file) => ({ type: "ESModule", path: fileURLToPath(new URL("../src/" + file, import.meta.url)) })),
     compatibilityDate: "2026-10-01", kvNamespaces: ["FEED"],
     durableObjects: { COORDINATOR: { className: "FeedCoordinator", useSQLite: true } },
-    bindings: { ALLOWED_ORIGINS: "https://site.example", FEED_ADMIN_TOKEN: token },
+    bindings: { ALLOWED_ORIGINS: "https://site.example", FEED_ADMIN_TOKEN: token, JBLANKED_API_KEY: "runtime-news-key-test-only" },
     async outboundService(request) {
       outbound++;
+      if (allowCalendar && request.url === JB_CALENDAR) {
+        assert.equal(request.headers.get("Authorization"), "Api-Key runtime-news-key-test-only");
+        return Response.json([{ Name: "Runtime event", Currency: "USD", Date: new Date(Date.now() + 3600000).toISOString(), Impact: "High", Forecast: 0, Previous: 1, Actual: 5 }]);
+      }
       if (!allowSeed || !request.url.startsWith(SEED_BASE + "/")) return new Response("Unexpected network", { status: 500 });
       const name = new URL(request.url).pathname.split("/").at(-1);
       if (!/^[A-Z]{6}_(M15|H1|D1)\.json$/.test(name)) return new Response("Unexpected file", { status: 404 });
@@ -58,5 +63,16 @@ test("Cloudflare runtime: KV, SQLite coordinator, admin auth and conditional COR
     assert.equal(snapshot.meta.prices_updated, 0);
     response = await mf.dispatchFetch("https://feed.example/admin/status", { method: "POST", headers: { Authorization: "Bearer " + token } });
     assert.equal((await response.json()).seeded, true);
+    allowCalendar = true;
+    response = await mf.dispatchFetch("https://feed.example/admin/calendar", { method: "POST" });
+    assert.equal(response.status, 401);
+    response = await mf.dispatchFetch("https://feed.example/admin/calendar", { method: "POST", headers: { Authorization: "Bearer " + token } });
+    assert.equal(response.status, 200);
+    const calendar = await response.json();
+    assert.equal(calendar.ok, true); assert.equal(calendar.calendar.source, "jbnews");
+    const current = JSON.parse(await kv.get("snapshot"));
+    assert.equal(current.news.events[0].title, "Runtime event");
+    assert.equal(current.news.events[0].actual, null);
+    assert.equal(outbound, 25);
   } finally { await mf.dispose(); }
 });

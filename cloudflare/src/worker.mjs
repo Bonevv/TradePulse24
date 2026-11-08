@@ -21,6 +21,7 @@ export class FeedCoordinator {
       if (request.method !== "POST") return json({ ok: false }, 405);
       const action = new URL(request.url).pathname;
       if (action === "/tick") return json(await this.feed.tick());
+      if (action === "/news") return json(await this.feed.refreshNews());
       if (action === "/seed") return json(await this.feed.seed());
       if (action === "/status") return json(await this.feed.status());
       return json({ ok: false }, 404);
@@ -44,7 +45,7 @@ export default {
       if (path.startsWith("/admin/")) {
         if (request.method !== "POST") return json({ ok: false }, 405);
         if (!await authorized(request, env)) return json({ ok: false, error: "Нужен е административен достъп." }, 401);
-        const action = ({ "/admin/status": "status", "/admin/seed": "seed", "/admin/refresh": "tick" })[path];
+        const action = ({ "/admin/calendar": "news", "/admin/status": "status", "/admin/seed": "seed", "/admin/refresh": "tick" })[path];
         return action ? await coordinator(env, action) : json({ ok: false }, 404);
       }
       const pair = /^\/history\/([A-Z]{6})$/.exec(path)?.[1];

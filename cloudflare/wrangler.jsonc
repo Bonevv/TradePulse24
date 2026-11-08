@@ -4,6 +4,7 @@
   "main": "src/worker.mjs",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
+  "keep_vars": true,
   "triggers": { "crons": ["2,17,32,47 * * * *"] },
   "kv_namespaces": [
     { "binding": "FEED", "id": "00000000000000000000000000000000" }

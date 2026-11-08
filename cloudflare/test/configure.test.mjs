@@ -16,6 +16,7 @@ test("Публикуването изисква истинско KV ID и не �
     const config = JSON.parse(readFileSync(join(folder, "wrangler.deploy.json"), "utf8"));
     assert.equal(config.kv_namespaces[0].id, "1234567890abcdef1234567890abcdef");
     assert.equal(config.migrations[0].new_sqlite_classes[0], "FeedCoordinator");
+    assert.equal(config.keep_vars, true, "Owner timezone variables survive code deployments");
     for (const name of ["TIINGO_API_KEY", "TWELVEDATA_API_KEY", "FEED_ADMIN_TOKEN"]) assert.equal(config.vars[name], undefined);
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
