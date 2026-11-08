@@ -41,7 +41,7 @@ function readinessFor(sig, order, model, advice, quote) {
     choice: signalPairChoice(sig), historyReady, newsTime: S.data?.news_updated, news: S.data?.news,
     newsFailed: (S.meta?.errors || []).some((e) => /календар|новини|ForexFactory/i.test(String(e))),
     balance: S.settings.balance, riskPct: S.settings.risk,
-    stats: RiskJournal.stats(journalTrades(), now()), plan: JOURNAL.plan, costRatio });
+    stats: JOURNAL.unreadable ? null : RiskJournal.stats(journalTrades(), now()), plan: JOURNAL.plan, costRatio });
   if (!["place", "enter", "wait"].includes(advice?.advice)) result.blocks.push({ code: "timing", text: "Цената или срокът вече не позволяват нов вход по този модел. Не гони движението и не влизай само защото цената е по-близо до стопа." });
   if (!Number.isFinite(proposed) || !Number.isFinite(model.stop) || (proposed - model.stop) * order.dir <= 0)
     result.blocks.push({ code: "stop", text: "Стопът е от грешната страна на новия вход." });
